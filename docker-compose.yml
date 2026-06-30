@@ -1,0 +1,15 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: procurement-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    env_file:
+      - .env
+    restart: unless-stopped
