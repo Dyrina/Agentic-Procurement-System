@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Local env (secrets injected via docker-compose)
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc artifacts
+*.txt
+*.md

@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from src.agents.manager import manager_pipeline
+from src.agents.manager import manager_graph
 from src.agents.tools.automation import run_automation
 from src.api.sse import create_session, end_stream, get_queue, push_event
 from src.database.client import SupabaseRepository
@@ -133,7 +133,7 @@ async def approve_chat(session_id: str) -> ApproveResponse:
 async def _run_pipeline(session_id: str, initial_state: dict) -> None:
     """Run the LangGraph manager graph as a background task."""
     try:
-        await manager_pipeline.ainvoke(initial_state)
+        await manager_graph.ainvoke(initial_state)
     except Exception as exc:
         await push_event(session_id, "error", {"step": "pipeline", "message": str(exc)})
         await end_stream(session_id)

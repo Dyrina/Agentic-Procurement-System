@@ -1,22 +1,29 @@
 FROM python:3.14-slim
 
-# Install uv 0.8.*
+# Install uv 0.8.x
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
 
-# Set working directory
 WORKDIR /app
 
-# Copy dependency manifest first for layer caching
-COPY pyproject.toml ./
+# Copy dependency manifests first (layer cache optimisation)
+COPY pyproject.toml uv.lock ./
 
-# Install dependencies via uv
-RUN uv sync --no-dev --no-install-project
+# Let uv create .venv and install dependencies directly in the container
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source code
+# Copy application source and tests
 COPY src/ ./src/
+COPY tests/ ./tests/
 
-# Expose the API port
+# Non-root user for security
+RUN groupadd --system app && useradd --system --gid app app \
+    && chown -R app:app /app
+USER app
+
+# All deps are pre-installed in .venv — skip uv cache writes
+ENV UV_NO_CACHE=1
+
 EXPOSE 8000
 
-# Run the FastAPI server
-ENTRYPOINT ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["uv", "run"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
