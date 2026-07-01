@@ -111,6 +111,27 @@ class SupabaseRepository:
             },
         )
 
+    def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
+        """Insert a new evaluation session row."""
+        return self.insert(
+            "evaluations",
+            {"session_id": session_id, "user_id": user_id, "status": "PLANNING"},
+        )
+
+    def get_evaluation(self, session_id: str) -> dict[str, Any] | None:
+        """Fetch a single evaluation by session ID."""
+        rows = self.select("evaluations", filters={"session_id": session_id})
+        return rows[0] if rows else None
+
+    def update_evaluation(self, session_id: str, **fields: Any) -> list[dict[str, Any]]:
+        """Update evaluation fields. Pass keyword args for each column to update."""
+        from datetime import datetime, timezone
+        return self.update(
+            "evaluations",
+            filters={"session_id": session_id},
+            data={**fields, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+
     def write_audit_log(
         self,
         action_type: str,
