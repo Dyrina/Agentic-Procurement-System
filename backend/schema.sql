@@ -69,3 +69,33 @@ INSERT INTO purchase_history (po_id, item_id, supplier_id, unit_price_sen, purch
     ('PO-2025-002', 'IT-MBP-14',  'SUP-A', 520000, '2025-07-10'),
     ('PO-2025-003', 'OF-CHAIR-E', 'SUP-C',  45000, '2025-09-01')
 ON CONFLICT (po_id) DO NOTHING;
+
+-- ============================================================
+-- Schema v2 migrations
+-- ============================================================
+
+-- Add delivery_days to purchase_history (missing from v1)
+ALTER TABLE purchase_history ADD COLUMN IF NOT EXISTS delivery_days INT NOT NULL DEFAULT 0;
+
+-- Update seed data with delivery_days
+UPDATE purchase_history SET delivery_days = 7  WHERE po_id = 'PO-2025-001';
+UPDATE purchase_history SET delivery_days = 12 WHERE po_id = 'PO-2025-002';
+UPDATE purchase_history SET delivery_days = 21 WHERE po_id = 'PO-2025-003';
+
+-- Add item_id, quantity, pdf_url to purchase_orders
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS item_id  TEXT REFERENCES items(item_id);
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS quantity  INT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS pdf_url  TEXT;
+
+-- Evaluations: persists full pipeline state per chat session
+CREATE TABLE IF NOT EXISTS evaluations (
+    session_id      TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'PLANNING',
+    plan_json       JSONB,
+    current_step    TEXT,
+    state_json      JSONB,
+    report_markdown TEXT,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
+);
