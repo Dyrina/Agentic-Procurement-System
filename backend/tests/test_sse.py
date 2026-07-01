@@ -3,61 +3,31 @@ tests/test_sse.py — Tests for SSE queue management and event emission.
 """
 
 import asyncio
-
 import pytest
+from src.api.sse import create_session, push_event, end_stream, format_sse
 
 
 @pytest.mark.asyncio
-async def test_create_and_emit():
-    """Creating a session and emitting events should populate the queue."""
-    from src.api.sse import create_session, destroy_session, emit
+async def test_push_and_drain_events():
+    create_session("sess_test")
+    await push_event("sess_test", "step_start", {"step": "check_stock"})
+    await push_event("sess_test", "step_done", {"step": "check_stock"})
+    await end_stream("sess_test")
 
-    session_id, queue = create_session()
-    assert session_id.startswith("sess_")
-
-    await emit(session_id, "status", {"message": "hello"})
-    event = await asyncio.wait_for(queue.get(), timeout=1.0)
-
-    assert event.event == "status"
-    assert event.data["message"] == "hello"
-
-    destroy_session(session_id)
+    from src.api.sse import _queues
+    # queue should be removed after end_stream
+    assert "sess_test" not in _queues
 
 
 @pytest.mark.asyncio
-async def test_emit_to_missing_session():
-    """Emitting to a nonexistent session should not raise."""
-    from src.api.sse import emit
+async def test_format_sse_output():
+    event = {"type": "plan", "data": {"steps": ["check_stock"]}}
+    result = format_sse(event)
+    assert result.startswith("event: plan\n")
+    assert '"steps"' in result
 
-    await emit("nonexistent_session", "test", {"x": 1})
+
+@pytest.mark.asyncio
+async def test_push_to_unknown_session_does_nothing():
     # Should not raise
-
-
-@pytest.mark.asyncio
-async def test_event_generator_stops_on_done():
-    """The event generator should stop after a 'done' event."""
-    from src.api.sse import SSEEvent, create_session, event_generator
-
-    _, queue = create_session()
-    await queue.put(SSEEvent(event="status", data={"step": 1}))
-    await queue.put(SSEEvent(event="done", data={"status": "ok"}))
-
-    events = []
-    async for ev in event_generator(queue):
-        events.append(ev)
-
-    assert len(events) == 2
-    assert events[-1]["event"] == "done"
-
-
-class TestSSEEventEncode:
-    """Tests for SSEEvent serialisation."""
-
-    def test_encode_format(self):
-        from src.api.sse import SSEEvent
-
-        ev = SSEEvent(event="plan", data={"steps": 4}, id="123")
-        encoded = ev.encode()
-        assert "id: 123" in encoded
-        assert "event: plan" in encoded
-        assert '"steps": 4' in encoded
+    await push_event("nonexistent", "step_start", {"step": "x"})
