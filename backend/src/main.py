@@ -1,71 +1,53 @@
-"""
-main.py — FastAPI application entrypoint.
-
-Registers API routers and provides health-check / metadata endpoints.
-Run with:  uvicorn src.main:app --reload
-"""
-
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import router as evaluations_router
+from src.api.routes import router as chat_router
+
+# Import mcp_server to trigger @mcp.tool() registrations in all tool modules
+import src.mcp_server  # noqa: F401
+import src.agents.tools.stock  # noqa: F401
+import src.agents.tools.rfq  # noqa: F401
+import src.agents.tools.quotes  # noqa: F401
+import src.agents.tools.history  # noqa: F401
+import src.agents.tools.evaluation  # noqa: F401
+import src.agents.tools.report  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Application lifespan events (startup / shutdown)."""
-    # Startup — validate that critical env vars are present early.
     from src.core.config import get_settings
-
-    get_settings()  # will raise if SUPABASE_URL / KEY are missing
+    get_settings()  # raises early if SUPABASE_URL / KEY missing
     yield
-    # Shutdown — nothing to clean up for now.
 
 
 app = FastAPI(
     title="AI Procurement Operations API",
-    description=(
-        "Multi-Agent System backend for automating the Source-to-Order "
-        "procurement lifecycle. Powered by LangGraph + Gemini."
-    ),
-    version="0.1.0",
+    description="Multi-Agent System backend. Powered by LangGraph + Gemini + FastMCP.",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
-# ── Middleware ──────────────────────────────────────────────────────────────
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ────────────────────────────────────────────────────────────────
-
-app.include_router(evaluations_router)
-
-
-# ── Root health-check ──────────────────────────────────────────────────────
+app.include_router(chat_router)
 
 
 @app.get("/", tags=["health"])
 async def root() -> dict[str, str]:
-    """Root health-check endpoint."""
-    return {
-        "service": "ai-procurement-ops",
-        "status": "healthy",
-        "version": "0.1.0",
-    }
+    return {"service": "ai-procurement-ops", "status": "healthy", "version": "0.2.0"}
 
 
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
-    """Explicit health endpoint for container orchestrators."""
     return {"status": "ok"}
