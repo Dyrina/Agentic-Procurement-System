@@ -19,7 +19,14 @@ class SupabaseRepository:
     """Generic CRUD helper for any Supabase table."""
 
     def __init__(self, client: Client | None = None) -> None:
-        self._client: Client = client or get_supabase_client()
+        self._explicit_client = client
+
+    @property
+    def _client(self) -> Client:
+        """Lazy-load the Supabase client on first use, not at import time."""
+        if self._explicit_client is not None:
+            return self._explicit_client
+        return get_supabase_client()
 
     # ── Generic helpers ─────────────────────────────────────────────────
 
@@ -128,6 +135,55 @@ class SupabaseRepository:
             },
         )
 
+    def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
+        """Insert a new evaluation session row."""
+        return self.insert(
+            "evaluations",
+            {"session_id": session_id, "user_id": user_id, "status": "PLANNING"},
+        )
+    def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
+        """Insert a new evaluation session row."""
+        return self.insert(
+            "evaluations",
+            {"session_id": session_id, "user_id": user_id, "status": "PLANNING"},
+        )
+
+    def get_evaluation(self, session_id: str) -> dict[str, Any] | None:
+        """Fetch a single evaluation by session ID."""
+        rows = self.select("evaluations", filters={"session_id": session_id})
+        return rows[0] if rows else None
+
+    def update_evaluation(self, session_id: str, **fields: Any) -> list[dict[str, Any]]:
+        """Update evaluation fields. Pass keyword args for each column to update."""
+        from datetime import datetime, timezone
+        return self.update(
+            "evaluations",
+            filters={"session_id": session_id},
+            data={**fields, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+
+    def create_purchase_order_full(
+        self,
+        supplier_id: str,
+        item_id: str,
+        quantity: int,
+        total_amount_sen: int,
+        approved_by: str,
+        pdf_url: str = "",
+    ) -> dict[str, Any]:
+        """Insert a purchase order with item, quantity, and PDF URL."""
+        return self.insert(
+            "purchase_orders",
+            {
+                "supplier_id": supplier_id,
+                "item_id": item_id,
+                "quantity": quantity,
+                "total_amount_sen": total_amount_sen,
+                "status": "APPROVED",
+                "approved_by": approved_by,
+                "pdf_url": pdf_url,
+            },
+        )
 
 # Module-level convenience instance
 db = SupabaseRepository()
