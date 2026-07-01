@@ -1,125 +1,136 @@
-"""
-tests/test_tools.py — Unit tests for MCP tool handlers (mocked DB/Gmail).
-"""
+"""Unit tests for tool handlers using mocked dependencies."""
 
 from unittest.mock import MagicMock, patch
+import pytest
 
-from src.agents.tools.quotes import _extract_delivery, _extract_price, extract_quotes
-
-
-class TestExtractPrice:
-    """Tests for quote price extraction from email text."""
-
-    def test_price_with_sen_suffix(self):
-        assert _extract_price("unit price: 395000 sen") == 395000
-
-    def test_price_without_suffix(self):
-        assert _extract_price("Price: 410000") == 410000
-
-    def test_price_rm_format(self):
-        assert _extract_price("Our price is RM 3950") == 395000
-
-    def test_no_price_returns_zero(self):
-        assert _extract_price("Thank you for your inquiry") == 0
+from src.core.state import ProcurementState
 
 
-class TestExtractDelivery:
-    """Tests for delivery days extraction from email text."""
+# ── check_stock ──────────────────────────────────────────────────────────────
 
-    def test_delivery_days_label(self):
-        assert _extract_delivery("delivery days: 5") == 5
-
-    def test_delivery_colon(self):
-        assert _extract_delivery("Delivery: 7") == 7
-
-    def test_n_days_pattern(self):
-        assert _extract_delivery("We can deliver in 3 business days") == 3
-
-    def test_no_delivery_returns_zero(self):
-        assert _extract_delivery("We will get back to you") == 0
-
-
-class TestExtractQuotes:
-    """Tests for the full extract_quotes function."""
-
-    def test_parses_structured_replies(self):
-        raw = [
-            {
-                "supplier_id": "SUP-A",
-                "supplier_name": "Alpha",
-                "replies": [
-                    {"body_text": "Price: 400000 sen. Delivery: 5 days."},
-                ],
-            },
-        ]
-        result = extract_quotes(raw)
-        assert len(result) == 1
-        assert result[0]["quoted_unit_price_sen"] == 400000
-        assert result[0]["quoted_delivery_days"] == 5
-
-    def test_handles_empty_replies(self):
-        raw = [{"supplier_id": "SUP-X", "replies": []}]
-        result = extract_quotes(raw)
-        assert result[0]["quoted_unit_price_sen"] == 0
-
-
-class TestCheckStock:
-    """Tests for the check_stock tool with mocked DB."""
-
-    @patch("src.agents.tools.stock.SupabaseRepository")
-    def test_returns_stock_info(self, mock_repo_cls):
-        mock_repo = MagicMock()
-        mock_repo.get_item.return_value = {
-            "item_id": "IT-XPS-15",
-            "name": "Dell XPS 15",
-            "current_stock": 4,
+@pytest.mark.asyncio
+async def test_check_stock_sufficient():
+    mock_db = MagicMock()
+    mock_db.select.return_value = [
+        {"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "current_stock": 50}
+    ]
+    with patch("src.agents.tools.stock.SupabaseRepository", return_value=mock_db):
+        from src.agents.tools.stock import check_stock_handler
+        state: ProcurementState = {
+            "session_id": "s1",
+            "user_message": "Buy 30 laptops",
+            "item_name": "Dell XPS 15 Laptop",
+            "requested_qty": 30,
         }
-        mock_repo_cls.return_value = mock_repo
-
-        from src.agents.tools.stock import check_stock
-
-        result = check_stock("IT-XPS-15")
-        assert result["current_stock"] == 4
-        assert result["stock_warning"] is True
-
-    @patch("src.agents.tools.stock.SupabaseRepository")
-    def test_item_not_found(self, mock_repo_cls):
-        mock_repo = MagicMock()
-        mock_repo.get_item.return_value = None
-        mock_repo_cls.return_value = mock_repo
-
-        from src.agents.tools.stock import check_stock
-
-        result = check_stock("NONEXISTENT")
-        assert "error" in result
+        result = await check_stock_handler(state)
+        assert result["stock_sufficient"] is True
+        assert result["item_id"] == "IT-XPS-15"
+        assert result["current_stock"] == 50
 
 
-class TestQueryHistory:
-    """Tests for the query_history tool with mocked DB."""
+@pytest.mark.asyncio
+async def test_check_stock_insufficient():
+    mock_db = MagicMock()
+    mock_db.select.return_value = [
+        {"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "current_stock": 4}
+    ]
+    with patch("src.agents.tools.stock.SupabaseRepository", return_value=mock_db):
+        from src.agents.tools.stock import check_stock_handler
+        state: ProcurementState = {
+            "session_id": "s1",
+            "user_message": "Buy 30 laptops",
+            "item_name": "Dell XPS 15 Laptop",
+            "requested_qty": 30,
+        }
+        result = await check_stock_handler(state)
+        assert result["stock_sufficient"] is False
 
-    @patch("src.agents.tools.history.SupabaseRepository")
-    def test_returns_history(self, mock_repo_cls):
-        mock_repo = MagicMock()
-        mock_repo.get_purchase_history.return_value = [
-            {"unit_price_sen": 360000, "purchase_date": "2025-08-20", "supplier_id": "SUP-B"},
-            {"unit_price_sen": 370000, "purchase_date": "2025-06-15", "supplier_id": "SUP-A"},
-        ]
-        mock_repo_cls.return_value = mock_repo
 
-        from src.agents.tools.history import query_history
+# ── query_history ────────────────────────────────────────────────────────────
 
-        result = query_history("IT-XPS-15")
-        assert result["average_past_price_sen"] == 365000
-        assert result["last_supplier_id"] == "SUP-B"
+@pytest.mark.asyncio
+async def test_query_history_computes_averages():
+    mock_db = MagicMock()
+    mock_db.get_purchase_history.return_value = [
+        {"unit_price_sen": 365000, "delivery_days": 7},
+        {"unit_price_sen": 385000, "delivery_days": 9},
+    ]
+    with patch("src.agents.tools.history.SupabaseRepository", return_value=mock_db):
+        from src.agents.tools.history import query_history_handler
+        state: ProcurementState = {
+            "session_id": "s1",
+            "user_message": "Buy laptops",
+            "item_id": "IT-XPS-15",
+        }
+        result = await query_history_handler(state)
+        assert result["avg_unit_price_sen"] == pytest.approx(375000.0)
+        assert result["avg_delivery_days"] == pytest.approx(8.0)
 
-    @patch("src.agents.tools.history.SupabaseRepository")
-    def test_empty_history(self, mock_repo_cls):
-        mock_repo = MagicMock()
-        mock_repo.get_purchase_history.return_value = []
-        mock_repo_cls.return_value = mock_repo
 
-        from src.agents.tools.history import query_history
+@pytest.mark.asyncio
+async def test_query_history_no_history_returns_zeros():
+    mock_db = MagicMock()
+    mock_db.get_purchase_history.return_value = []
+    with patch("src.agents.tools.history.SupabaseRepository", return_value=mock_db):
+        from src.agents.tools.history import query_history_handler
+        state: ProcurementState = {"session_id": "s1", "user_message": "Buy laptops", "item_id": "IT-NEW"}
+        result = await query_history_handler(state)
+        assert result["avg_unit_price_sen"] == 0.0
+        assert result["avg_delivery_days"] == 0.0
 
-        result = query_history("NEW-ITEM")
-        assert result["average_past_price_sen"] == 0
-        assert result["records"] == []
+
+# ── evaluate_suppliers ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_evaluate_suppliers_handler():
+    from src.agents.tools.evaluation import evaluate_suppliers_handler
+    state: ProcurementState = {
+        "session_id": "s1",
+        "user_message": "Buy laptops",
+        "extracted_quotes": [
+            {"supplier_id": "SUP-A", "supplier_name": "Alpha Tech", "unit_price_sen": 410000, "quoted_delivery_days": 5, "payment_terms": "Net-30"},
+            {"supplier_id": "SUP-B", "supplier_name": "Global IT", "unit_price_sen": 395000, "quoted_delivery_days": 2, "payment_terms": "Net-60"},
+        ],
+        "avg_unit_price_sen": 365000.0,
+        "avg_delivery_days": 7.0,
+    }
+    result = await evaluate_suppliers_handler(state)
+    evaluated = result["evaluated_suppliers"]
+    assert len(evaluated) == 2
+    recommended = next(s for s in evaluated if s["is_recommended"])
+    assert recommended["supplier_id"] == "SUP-B"
+
+
+# ── generate_report ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_generate_report_handler_contains_key_fields():
+    from src.agents.tools.report import generate_report_handler
+    state: ProcurementState = {
+        "session_id": "s1",
+        "user_message": "Buy 30 laptops",
+        "item_name": "Dell XPS 15 Laptop",
+        "requested_qty": 30,
+        "stock_sufficient": False,
+        "current_stock": 4,
+        "evaluated_suppliers": [
+            {
+                "supplier_id": "SUP-B",
+                "supplier_name": "Global IT",
+                "unit_price_sen": 395000,
+                "quoted_delivery_days": 2,
+                "payment_terms": "Net-60",
+                "price_score": 100.0,
+                "delivery_score": 100.0,
+                "payment_terms_score": 100.0,
+                "total_score": 100.0,
+                "risk_flags": [],
+                "is_recommended": True,
+            }
+        ],
+    }
+    result = await generate_report_handler(state)
+    md = result["report_markdown"]
+    assert "Global IT" in md
+    assert "Dell XPS 15" in md
+    assert "Recommended" in md or "recommended" in md

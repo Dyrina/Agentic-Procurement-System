@@ -73,8 +73,7 @@ def fetch_replies(
             "attachments": [{"filename": str, "data": bytes}]
         }
     """
-    import email as email_lib
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # Convert ISO timestamp to Unix epoch for Gmail query
     dt = datetime.fromisoformat(since_timestamp.replace("Z", "+00:00"))
