@@ -39,7 +39,7 @@ async def wait_for_quotes(
 
 
 async def wait_for_quotes_handler(state: ProcurementState) -> ProcurementState:
-    result = await wait_for_quotes(
+    result = await wait_for_quotes.fn(
         supplier_emails=state["supplier_emails"],
         rfq_sent_at=state["rfq_sent_at"],
     )
@@ -120,7 +120,7 @@ async def extract_quotes(supplier_emails: list[str], rfq_sent_at: str) -> dict:
 
 
 async def extract_quotes_handler(state: ProcurementState) -> ProcurementState:
-    result = await extract_quotes(
+    result = await extract_quotes.fn(
         supplier_emails=state["supplier_emails"],
         rfq_sent_at=state["rfq_sent_at"],
     )

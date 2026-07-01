@@ -81,7 +81,7 @@ Estimated unit price: RM {rec_price/100:,.2f} | Delivery: {rec_delivery} days
 
 
 async def generate_report_handler(state: ProcurementState) -> ProcurementState:
-    result = await generate_report(
+    result = await generate_report.fn(
         evaluated_suppliers=state.get("evaluated_suppliers", []),
         item_name=state.get("item_name", ""),
         requested_qty=state.get("requested_qty", 0),

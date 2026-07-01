@@ -24,7 +24,7 @@ async def query_history(item_id: str) -> dict:
 
 
 async def query_history_handler(state: ProcurementState) -> ProcurementState:
-    result = await query_history(state["item_id"])
+    result = await query_history.fn(state["item_id"])
     return {
         **state,
         "avg_unit_price_sen": result["avg_unit_price_sen"],

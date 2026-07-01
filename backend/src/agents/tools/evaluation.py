@@ -23,7 +23,7 @@ async def evaluate_suppliers(
 
 
 async def evaluate_suppliers_handler(state: ProcurementState) -> ProcurementState:
-    result = await evaluate_suppliers(
+    result = await evaluate_suppliers.fn(
         extracted_quotes=state.get("extracted_quotes", []),
         avg_unit_price_sen=state.get("avg_unit_price_sen", 0.0),
         avg_delivery_days=state.get("avg_delivery_days", 0.0),

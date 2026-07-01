@@ -54,5 +54,5 @@ async def send_rfqs(item_name: str, requested_qty: int) -> dict:
 
 
 async def send_rfqs_handler(state: ProcurementState) -> ProcurementState:
-    result = await send_rfqs(state["item_name"], state["requested_qty"])
+    result = await send_rfqs.fn(state["item_name"], state["requested_qty"])
     return {**state, "rfq_sent_at": result["rfq_sent_at"], "supplier_emails": result["supplier_emails"]}

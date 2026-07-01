@@ -26,7 +26,7 @@ async def check_stock(item_name: str, requested_qty: int) -> dict:
 
 async def check_stock_handler(state: ProcurementState) -> ProcurementState:
     """Execute node handler: reads item_name + requested_qty from state, writes result back."""
-    result = await check_stock(state["item_name"], state["requested_qty"])
+    result = await check_stock.fn(state["item_name"], state["requested_qty"])
     return {
         **state,
         "item_id": result["item_id"],
