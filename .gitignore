@@ -90,3 +90,6 @@ data/**/*.sqlite3
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+*.txt
+*.md

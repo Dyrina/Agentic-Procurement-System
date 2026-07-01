@@ -63,7 +63,7 @@ def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
 
 def _parse_quotes_with_gemini(text: str, api_key: str) -> list[dict[str, Any]]:
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=api_key)
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=api_key)
     structured = llm.with_structured_output(_QuotesOutput)
     prompt = (
         "Extract procurement quote data from this supplier communication.\n\n"

@@ -53,7 +53,7 @@ class _PlanOutput(BaseModel):
 async def plan_node(state: ProcurementState) -> ProcurementState:
     """Call Gemini with structured output to generate a step-by-step plan."""
     settings = get_settings()
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=settings.GOOGLE_API_KEY)
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=settings.GOOGLE_API_KEY)
     structured = llm.with_structured_output(_PlanOutput)
 
     tool_list = "\n".join(

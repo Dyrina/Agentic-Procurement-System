@@ -13,7 +13,7 @@ from src.services.gmail import get_gmail_service, send_email
 
 def _draft_rfq_email(item_name: str, requested_qty: int, api_key: str) -> str:
     """Use Gemini to draft an RFQ email body in HTML."""
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=api_key)
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=api_key)
     prompt = (
         f"Draft a professional Request for Quotation (RFQ) email body in HTML.\n"
         f"Item: {item_name}\n"
