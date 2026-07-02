@@ -164,17 +164,24 @@ class SupabaseRepository:
         self,
         supplier_id: str,
         item_id: str,
+        item_name: str,
         quantity: int,
         total_amount_sen: int,
         approved_by: str,
         pdf_url: str = "",
     ) -> dict[str, Any]:
-        """Insert a purchase order with item, quantity, and PDF URL."""
+        """Insert a purchase order with item, quantity, and PDF URL.
+
+        item_name is stored directly (not just derived via item_id) so purchase_orders stays
+        queryable on its own even for non-stock items filed under the shared UNCATALOGED
+        item_id — see agents/workers/inventory.py.
+        """
         return self.insert(
             "purchase_orders",
             {
                 "supplier_id": supplier_id,
                 "item_id": item_id,
+                "item_name": item_name,
                 "quantity": quantity,
                 "total_amount_sen": total_amount_sen,
                 "status": "APPROVED",

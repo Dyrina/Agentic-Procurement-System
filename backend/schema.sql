@@ -34,9 +34,15 @@ CREATE TABLE IF NOT EXISTS purchase_history (
 CREATE TABLE IF NOT EXISTS purchase_orders (
     new_po_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     supplier_id      TEXT NOT NULL REFERENCES suppliers(supplier_id),
+    item_id          TEXT REFERENCES items(item_id),
+    -- Denormalized on purpose: keeps this table queryable/reportable on its own (what was
+    -- actually bought) even for non-stock items filed under the shared UNCATALOGED item_id.
+    item_name        TEXT,
+    quantity         INT NOT NULL DEFAULT 1,
     total_amount_sen INT  NOT NULL,
     status           TEXT NOT NULL DEFAULT 'PENDING',
-    approved_by      TEXT
+    approved_by      TEXT,
+    pdf_url          TEXT
 );
 
 -- 5. Audit Logs
@@ -61,7 +67,11 @@ ON CONFLICT (supplier_id) DO NOTHING;
 INSERT INTO items (item_id, name, category, current_stock) VALUES
     ('IT-XPS-15',  'Dell XPS 15 Laptop',       'IT Equipment', 4),
     ('IT-MBP-14',  'MacBook Pro 14"',           'IT Equipment', 12),
-    ('OF-CHAIR-E', 'Ergonomic Office Chair',    'Furniture',    30)
+    ('OF-CHAIR-E', 'Ergonomic Office Chair',    'Furniture',    30),
+    -- Sentinel row: FK target for purchase_orders.item_id when the requested item isn't in
+    -- the catalog (a non-stock/one-time purchase — common in real procurement). The real item
+    -- name is still recorded per-order via purchase_orders.item_name, not lost here.
+    ('UNCATALOGED', '(uncataloged item)',      'Uncataloged',  0)
 ON CONFLICT (item_id) DO NOTHING;
 
 INSERT INTO purchase_history (po_id, item_id, supplier_id, unit_price_sen, purchase_date) VALUES

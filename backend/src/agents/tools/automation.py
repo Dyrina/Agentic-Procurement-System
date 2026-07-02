@@ -97,6 +97,7 @@ async def run_automation(state: dict) -> dict:
     po_record = db.create_purchase_order_full(
         supplier_id=recommended["supplier_id"],
         item_id=item_id,
+        item_name=item_name,
         quantity=quantity,
         total_amount_sen=total_amount_sen,
         approved_by=state.get("user_id", "system"),

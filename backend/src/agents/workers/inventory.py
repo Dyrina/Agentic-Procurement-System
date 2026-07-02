@@ -20,12 +20,10 @@ from src.database.client import SupabaseRepository
 
 @tool
 def search_items(query: str) -> list[dict]:
-    """Search the item catalog by approximate name (trigram similarity); up to 5 candidates."""
+    """Search the item catalog by approximate name (trigram similarity); up to 5 candidates.
+    Returns an empty list if nothing matches — that's a valid outcome, not an error."""
     db = SupabaseRepository()
-    rows = db.rpc("search_items_by_name", {"query": query, "match_limit": 5})
-    if not rows:
-        raise ValueError(f"No items found matching '{query}'")
-    return rows
+    return db.rpc("search_items_by_name", {"query": query, "match_limit": 5})
 
 
 @tool
@@ -79,6 +77,27 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
                     _history_entry(
                         f"item_id={state['item_id']!r}, "
                         f"stock_sufficient={result['stock_sufficient']}"
+                    ),
+                ],
+            }
+
+        # Deterministic pre-check, same reasoning as the item_id branch above: no need for an
+        # LLM round-trip just to discover the catalog has zero matches. Buying something not
+        # yet in the catalog is a normal, common procurement flow (a non-stock/one-time
+        # purchase) — not an error — so this proceeds straight to sourcing under a shared
+        # sentinel item_id rather than interrupting to ask, and rather than auto-creating a
+        # real catalog row (that's someone else's system's job, not this agent's).
+        db = SupabaseRepository()
+        candidates = db.rpc("search_items_by_name", {"query": state["item_name"], "match_limit": 5})
+        if not candidates:
+            return {
+                **state,
+                "item_id": "UNCATALOGED",
+                "inventory_candidates": None,
+                "supervisor_history": [
+                    *history,
+                    _history_entry(
+                        f"{state['item_name']!r} not in catalog — proceeding as a non-stock item"
                     ),
                 ],
             }
