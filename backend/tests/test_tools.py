@@ -4,8 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.core.state import ProcurementState
-
 # ── query_history ────────────────────────────────────────────────────────────
 
 
@@ -40,34 +38,48 @@ async def test_query_history_no_history_returns_zeros():
 
 
 @pytest.mark.asyncio
-async def test_generate_report_handler_contains_key_fields():
-    from src.agents.tools.report import generate_report_handler
+async def test_generate_report_contains_key_fields():
+    from src.agents.tools.report import generate_report
 
-    state: ProcurementState = {
-        "session_id": "s1",
-        "user_message": "Buy 30 laptops",
-        "item_name": "Dell XPS 15 Laptop",
-        "requested_qty": 30,
-        "stock_sufficient": False,
-        "current_stock": 4,
-        "evaluated_suppliers": [
+    result = await generate_report(
+        evaluated_suppliers=[
             {
                 "supplier_id": "SUP-B",
                 "supplier_name": "Global IT",
                 "unit_price_sen": 395000,
                 "quoted_delivery_days": 2,
                 "payment_terms": "Net-60",
-                "price_score": 100.0,
-                "delivery_score": 100.0,
-                "payment_terms_score": 100.0,
                 "total_score": 100.0,
                 "risk_flags": [],
                 "is_recommended": True,
+                "reasoning": "Best price and fastest delivery.",
             }
         ],
-    }
-    result = await generate_report_handler(state)
+        item_name="Dell XPS 15 Laptop",
+        requested_qty=30,
+        stock_sufficient=False,
+        current_stock=4,
+    )
     md = result["report_markdown"]
     assert "Global IT" in md
     assert "Dell XPS 15" in md
     assert "Recommended" in md or "recommended" in md
+
+
+@pytest.mark.asyncio
+async def test_generate_report_handles_no_evaluation_needed():
+    """Regression: the supervisor can route straight to Reporting when stock is already
+    sufficient, skipping Sourcing/Evaluation — evaluated_suppliers is then empty, and the old
+    template crashed on recommended['total_score'] when recommended was None."""
+    from src.agents.tools.report import generate_report
+
+    result = await generate_report(
+        evaluated_suppliers=[],
+        item_name="Ergonomic Office Chair",
+        requested_qty=5,
+        stock_sufficient=True,
+        current_stock=30,
+    )
+    md = result["report_markdown"]
+    assert "Ergonomic Office Chair" in md
+    assert "sufficient" in md.lower()

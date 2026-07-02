@@ -648,3 +648,74 @@ async def test_evaluation_node_catches_exceptions():
         result = await evaluation_node(state)
 
     assert result["error"] == "boom"
+
+
+# ── reporting ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reporting_node_assembles_report_with_summary():
+    from src.agents.workers.reporting import reporting_node
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=AIMessage(content="Global IT offers the best deal."))
+    state: ProcurementState = {
+        "session_id": "s1",
+        "item_name": "Dell XPS 15 Laptop",
+        "requested_qty": 30,
+        "stock_sufficient": False,
+        "current_stock": 4,
+        "evaluated_suppliers": [
+            {
+                "supplier_id": "SUP-B",
+                "supplier_name": "Global IT",
+                "unit_price_sen": 395000,
+                "quoted_delivery_days": 2,
+                "payment_terms": "Net-60",
+                "total_score": 95.0,
+                "risk_flags": [],
+                "is_recommended": True,
+                "reasoning": "Cheapest and fastest.",
+            }
+        ],
+    }
+    with patch("src.agents.workers.reporting._build_llm", return_value=mock_llm):
+        result = await reporting_node(state)
+
+    assert "Global IT offers the best deal." in result["report_markdown"]
+    assert "Global IT" in result["report_markdown"]
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_reporting_node_handles_no_evaluation_needed():
+    from src.agents.workers.reporting import reporting_node
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(
+        return_value=AIMessage(content="Stock is sufficient, no purchase needed.")
+    )
+    state: ProcurementState = {
+        "session_id": "s1",
+        "item_name": "Ergonomic Office Chair",
+        "requested_qty": 5,
+        "stock_sufficient": True,
+        "current_stock": 30,
+        "evaluated_suppliers": [],
+    }
+    with patch("src.agents.workers.reporting._build_llm", return_value=mock_llm):
+        result = await reporting_node(state)
+
+    assert "error" not in result
+    assert "Ergonomic Office Chair" in result["report_markdown"]
+
+
+@pytest.mark.asyncio
+async def test_reporting_node_catches_exceptions():
+    from src.agents.workers.reporting import reporting_node
+
+    state: ProcurementState = {"session_id": "s1", "item_name": "x", "requested_qty": 1}
+    with patch("src.agents.workers.reporting._build_llm", side_effect=RuntimeError("boom")):
+        result = await reporting_node(state)
+
+    assert result["error"] == "boom"
