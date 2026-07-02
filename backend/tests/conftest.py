@@ -27,3 +27,27 @@ def fake_llm():
         return FakeToolCallingModel(responses=list(responses))
 
     return _make
+
+
+@pytest.fixture
+def fake_supervisor_llm():
+    """fake_supervisor_llm([decision, ...]) -> stand-in for supervisor.py's
+    ChatGoogleGenerativeAI(...).with_structured_output(_NextWorker) chain. Pops one decision
+    per supervisor_node call from a shared queue (not a fresh copy) so a multi-turn graph run
+    advances through the queue instead of restarting it every call.
+    """
+
+    def _make(decisions):
+        shared = list(decisions)
+
+        class _FakeStructured:
+            async def ainvoke(self, messages):
+                return shared.pop(0)
+
+        class _FakeLLM:
+            def with_structured_output(self, schema):
+                return _FakeStructured()
+
+        return _FakeLLM()
+
+    return _make
