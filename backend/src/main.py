@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Procurement Operations API",
-    description="Multi-Agent System backend. Powered by LangGraph + Gemini + FastMCP.",
+    description="Multi-Agent System backend. Powered by LangGraph + Gemini.",
     version="0.2.0",
     lifespan=lifespan,
 )

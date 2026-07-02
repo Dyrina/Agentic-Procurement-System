@@ -6,6 +6,7 @@ the LangGraph manager graph.  Every node reads from and writes to this dict.
 """
 
 from __future__ import annotations
+
 from typing import Any, TypedDict
 
 
@@ -19,7 +20,7 @@ class ProcurementState(TypedDict, total=False):
     # Supervisor loop
     next_worker: str
     worker_calls: int
-    supervisor_history: list[dict[str, str]]   # [{"worker": str, "summary": str}], deterministic scratchpad
+    supervisor_history: list[dict[str, str]]  # [{"worker": str, "summary": str}], deterministic
 
     status: str                 # EXECUTING | AWAITING_INPUT | AWAITING_APPROVAL | APPROVED | FAILED
     error: str | None
