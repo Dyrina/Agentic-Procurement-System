@@ -99,3 +99,28 @@ CREATE TABLE IF NOT EXISTS evaluations (
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ DEFAULT now()
 );
+
+-- ============================================================
+-- Schema v3 migrations — trigram item search + human-in-the-loop
+-- ============================================================
+
+-- Fuzzy item-name lookup (replaces exact/substring matching in the Inventory agent)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS items_name_trgm_idx ON items USING gin (name gin_trgm_ops);
+
+CREATE OR REPLACE FUNCTION search_items_by_name(query TEXT, match_limit INT DEFAULT 5)
+RETURNS TABLE(item_id TEXT, name TEXT, category TEXT, current_stock INT, similarity REAL)
+LANGUAGE sql STABLE
+AS $$
+    SELECT item_id, name, category, current_stock, similarity(name, query) AS similarity
+    FROM items
+    WHERE name % query
+    ORDER BY similarity DESC
+    LIMIT match_limit;
+$$;
+
+-- Lets a paused session (interrupt()) tell the frontend what it's waiting on
+ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS awaiting_input_json JSONB;
+
+-- LangGraph's own checkpoint tables (checkpoints, checkpoint_blobs, checkpoint_writes)
+-- are created by AsyncPostgresSaver.setup() at app startup, not by this file.
