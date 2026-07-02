@@ -23,6 +23,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
+from src.agents.workers import _extract_text
 from src.core.config import get_settings
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
@@ -49,7 +50,7 @@ def _draft_rfq_email(item_name: str, requested_qty: int, api_key: str) -> str:
         f"Return only the HTML email body, no subject line, no preamble."
     )
     response = llm.invoke(prompt)
-    return response.content
+    return _extract_text(response.content)
 
 
 async def send_rfqs(item_name: str, requested_qty: int) -> dict:

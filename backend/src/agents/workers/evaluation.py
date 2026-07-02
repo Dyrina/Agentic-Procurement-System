@@ -12,12 +12,25 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
+from pydantic import BaseModel
 
 from src.agents.tools.history import query_history
 from src.agents.workers import _build_llm, _last_tool_call
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
 from src.services.scoring import score_suppliers
+
+
+class _EvaluatedSupplier(BaseModel):
+    supplier_id: str
+    supplier_name: str
+    unit_price_sen: int
+    quoted_delivery_days: int
+    payment_terms: str
+    total_score: float
+    risk_flags: list[str]
+    is_recommended: bool
+    reasoning: str
 
 
 @tool
@@ -37,17 +50,15 @@ def get_reference_score(
 
 
 @tool
-def write_audit_log(evaluated_suppliers: list[dict], overall_reasoning: str) -> str:
+def write_audit_log(evaluated_suppliers: list[_EvaluatedSupplier], overall_reasoning: str) -> str:
     """Terminal tool: submit your final supplier evaluation and reasoning. Call this exactly
-    once, after you've decided which supplier to recommend. Every entry in evaluated_suppliers
-    must include: supplier_id, supplier_name, unit_price_sen, quoted_delivery_days,
-    payment_terms, total_score (0-100), risk_flags (list of strings), is_recommended (bool),
-    and reasoning (a short explanation of your judgment for that supplier). Exactly one
+    once, after you've decided which supplier to recommend. total_score is 0-100. Exactly one
     supplier must have is_recommended=true."""
     db = SupabaseRepository()
-    recommended = next((s for s in evaluated_suppliers if s.get("is_recommended")), None)
+    suppliers = [s.model_dump() for s in evaluated_suppliers]
+    recommended = next((s for s in suppliers if s["is_recommended"]), None)
     decision_json = {
-        "evaluated_suppliers": evaluated_suppliers,
+        "evaluated_suppliers": suppliers,
         "overall_reasoning": overall_reasoning,
         "recommended_supplier_id": recommended["supplier_id"] if recommended else None,
     }
