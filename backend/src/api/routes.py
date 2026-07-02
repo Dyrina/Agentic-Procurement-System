@@ -3,6 +3,7 @@ api/routes.py — FastAPI chat endpoints for the agentic procurement system.
 
 POST  /api/v1/chat                       — start a procurement session
 GET   /api/v1/chat/{session_id}/stream   — SSE stream of agent updates
+POST  /api/v1/chat/{session_id}/reply    — answer a paused session's clarification/confirmation
 POST  /api/v1/chat/{session_id}/approve  — trigger Automation Agent post-approval
 """
 
@@ -12,12 +13,14 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from langgraph.types import Command
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from src.agents.manager import manager_graph
+from src.agents.manager import get_manager_graph
 from src.agents.tools.automation import run_automation
 from src.api.sse import create_session, end_stream, get_queue, push_event
 from src.database.client import SupabaseRepository
@@ -29,6 +32,7 @@ db = SupabaseRepository()
 
 # ── Request / Response models ───────────────────────────────────────────────
 
+
 class ChatRequest(BaseModel):
     message: str
     user_id: str = "anonymous"
@@ -36,6 +40,15 @@ class ChatRequest(BaseModel):
 
 class ChatCreated(BaseModel):
     session_id: str
+
+
+class ReplyRequest(BaseModel):
+    # Shape depends on which interrupt is pending (intake_clarification /
+    # inventory_candidate_confirm / sourcing_timeout — see the `type` field of the
+    # "awaiting_input" SSE event); the frontend
+    # contract for each isn't designed yet, so this stays a loose passthrough rather than a
+    # premature set of typed models.
+    reply: dict[str, Any]
 
 
 class ApproveResponse(BaseModel):
@@ -46,6 +59,7 @@ class ApproveResponse(BaseModel):
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
 
+
 @router.post("/chat", response_model=ChatCreated, status_code=202)
 async def create_chat(body: ChatRequest) -> ChatCreated:
     """
@@ -55,24 +69,40 @@ async def create_chat(body: ChatRequest) -> ChatCreated:
     session_id = f"sess_{uuid.uuid4().hex[:8]}"
     session_start_ts = datetime.now(timezone.utc).isoformat()
 
-    # Parse item_name and requested_qty from the message
-    # The Manager Agent will do the deep parsing — we seed minimal state here
+    # Intake owns all parsing now — no more naive item_name/requested_qty extraction here.
     initial_state = {
         "session_id": session_id,
         "user_id": body.user_id,
         "user_message": body.message,
         "session_start_ts": session_start_ts,
-        "plan_attempts": 0,
-        "item_name": _extract_item_name(body.message),
-        "requested_qty": _extract_quantity(body.message),
+        "worker_calls": 0,
     }
 
     # Create SSE queue and evaluation row before starting background task
     create_session(session_id)
     db.create_evaluation(session_id, body.user_id)
 
-    asyncio.create_task(_run_pipeline(session_id, initial_state))
+    asyncio.create_task(_drive_graph(session_id, initial_state))
     return ChatCreated(session_id=session_id)
+
+
+@router.post("/chat/{session_id}/reply")
+async def reply_chat(session_id: str, body: ReplyRequest) -> dict[str, str]:
+    """
+    Answer a paused session's clarification/confirmation/escalation. The SSE stream opened by
+    /chat stays connected across the pause — this just resumes the same graph run.
+    """
+    record = db.get_evaluation(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if record["status"] != "AWAITING_INPUT":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session status is '{record['status']}', expected 'AWAITING_INPUT'",
+        )
+
+    asyncio.create_task(_drive_graph(session_id, Command(resume=body.reply)))
+    return {"status": "RESUMED"}
 
 
 @router.get("/chat/{session_id}/stream")
@@ -84,11 +114,20 @@ async def stream_chat(session_id: str):
         record = db.get_evaluation(session_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        # Stream a synthetic done event
+
+        # Stream a synthetic replay event — covers both "already completed" and "the server
+        # restarted while this session was paused" (the in-memory SSE queue doesn't survive
+        # a restart, but status/awaiting_input_json/report_markdown are persisted).
         async def _replay():
-            if record.get("report_markdown"):
-                yield {"event": "report", "data": json.dumps({"markdown": record["report_markdown"]})}
+            if record["status"] == "AWAITING_INPUT" and record.get("awaiting_input_json"):
+                yield {"event": "awaiting_input", "data": json.dumps(record["awaiting_input_json"])}
+            elif record.get("report_markdown"):
+                yield {
+                    "event": "report",
+                    "data": json.dumps({"markdown": record["report_markdown"]}),
+                }
                 yield {"event": "approve_ready", "data": json.dumps({"session_id": session_id})}
+
         return EventSourceResponse(_replay())
 
     async def _generator():
@@ -130,34 +169,45 @@ async def approve_chat(session_id: str) -> ApproveResponse:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-async def _run_pipeline(session_id: str, initial_state: dict) -> None:
-    """Run the LangGraph manager graph as a background task."""
+
+async def _drive_graph(session_id: str, graph_input: dict | Command) -> None:
+    """Run one leg of the manager graph (a fresh start or a resume) as a background task, then
+    react to whether it paused (interrupt) or ran to completion."""
+    config = {"configurable": {"thread_id": session_id}}
     try:
-        await manager_graph.ainvoke(initial_state)
+        result = await get_manager_graph().ainvoke(graph_input, config=config)
     except Exception as exc:
         await push_event(session_id, "error", {"step": "pipeline", "message": str(exc)})
         await end_stream(session_id)
         db.update_evaluation(session_id, status="FAILED")
+        return
 
+    if interrupts := result.get("__interrupt__"):
+        payload = interrupts[0].value
+        await push_event(session_id, "awaiting_input", payload)
+        db.update_evaluation(session_id, status="AWAITING_INPUT", awaiting_input_json=payload)
+        return
 
-def _extract_item_name(message: str) -> str:
-    """
-    Naive item name extraction from the user message.
-    The Manager Agent planning prompt handles proper interpretation,
-    but we need a seed value for the state.
-    """
-    # Strip leading quantity words, return rest as item name
-    words = message.split()
-    for i, word in enumerate(words):
-        if word.isdigit():
-            return " ".join(words[i + 1:]) if i + 1 < len(words) else message
-    return message
+    if result.get("status") == "FAILED":
+        await push_event(
+            session_id,
+            "error",
+            {"step": "pipeline", "message": result.get("error", "Unknown error")},
+        )
+        await end_stream(session_id)
+        db.update_evaluation(session_id, status="FAILED")
+        return
 
-
-def _extract_quantity(message: str) -> int:
-    """Extract first integer from message as requested quantity."""
-    for word in message.split():
-        cleaned = word.rstrip(".,")
-        if cleaned.isdigit():
-            return int(cleaned)
-    return 1
+    await push_event(session_id, "report", {"markdown": result.get("report_markdown", "")})
+    await push_event(
+        session_id,
+        "approve_ready",
+        {"session_id": session_id, "message": "Approve to generate purchase order"},
+    )
+    await end_stream(session_id)
+    db.update_evaluation(
+        session_id,
+        status="AWAITING_APPROVAL",
+        report_markdown=result.get("report_markdown", ""),
+        state_json=dict(result),
+    )

@@ -8,21 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router as chat_router
 
-# Import mcp_server to trigger @mcp.tool() registrations in all tool modules
-import src.mcp_server  # noqa: F401
-import src.agents.tools.stock  # noqa: F401
-import src.agents.tools.rfq  # noqa: F401
-import src.agents.tools.quotes  # noqa: F401
-import src.agents.tools.history  # noqa: F401
-import src.agents.tools.evaluation  # noqa: F401
-import src.agents.tools.report  # noqa: F401
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    from src.core.config import get_settings
-    get_settings()  # raises early if SUPABASE_URL / KEY missing
-    yield
+    from src.core.config import get_checkpoint_pool, get_checkpointer, get_settings
+
+    get_settings()  # raises early if required env vars are missing
+
+    pool = get_checkpoint_pool()
+    await pool.open()
+    await get_checkpointer().setup()  # idempotent — creates the checkpoint tables if needed
+    try:
+        yield
+    finally:
+        await pool.close()
 
 
 app = FastAPI(
