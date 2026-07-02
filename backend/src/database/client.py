@@ -70,6 +70,10 @@ class SupabaseRepository:
         response = query.execute()
         return response.data
 
+    def rpc(self, fn_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Call a Postgres function (e.g. search_items_by_name) and return its rows."""
+        return self._client.rpc(fn_name, params).execute().data
+
     # ── Domain-specific convenience methods ─────────────────────────────
 
     def get_supplier(self, supplier_id: str) -> dict[str, Any] | None:
@@ -154,33 +158,6 @@ class SupabaseRepository:
                 "agent_name": agent_name,
                 "decision_json": decision_json or {},
             },
-        )
-
-    def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
-        """Insert a new evaluation session row."""
-        return self.insert(
-            "evaluations",
-            {"session_id": session_id, "user_id": user_id, "status": "PLANNING"},
-        )
-    def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
-        """Insert a new evaluation session row."""
-        return self.insert(
-            "evaluations",
-            {"session_id": session_id, "user_id": user_id, "status": "PLANNING"},
-        )
-
-    def get_evaluation(self, session_id: str) -> dict[str, Any] | None:
-        """Fetch a single evaluation by session ID."""
-        rows = self.select("evaluations", filters={"session_id": session_id})
-        return rows[0] if rows else None
-
-    def update_evaluation(self, session_id: str, **fields: Any) -> list[dict[str, Any]]:
-        """Update evaluation fields. Pass keyword args for each column to update."""
-        from datetime import datetime, timezone
-        return self.update(
-            "evaluations",
-            filters={"session_id": session_id},
-            data={**fields, "updated_at": datetime.now(timezone.utc).isoformat()},
         )
 
     def create_purchase_order_full(
