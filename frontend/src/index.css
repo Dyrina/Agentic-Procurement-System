@@ -392,6 +392,13 @@ nav button:disabled {
   opacity: 0.6;
 }
 
+.reply-option-btn-muted {
+  background: none;
+  border-style: dashed;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .reply-text-form {
   display: flex;
   gap: 8px;

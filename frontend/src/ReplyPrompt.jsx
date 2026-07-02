@@ -6,10 +6,11 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
   const questionText = payload.question || payload.message;
 
   function handleCandidateClick(candidate) {
-    onReply(
-      { selected_item_id: candidate.item_id },
-      `Selected: ${candidate.name} (${candidate.current_stock} in stock)`
-    );
+    const label =
+      candidate.item_id === "UNCATALOGED"
+        ? candidate.name
+        : `Selected: ${candidate.name} (${candidate.current_stock} in stock)`;
+    onReply({ selected_item_id: candidate.item_id }, label);
   }
 
   function handleOptionClick(option) {
@@ -32,11 +33,15 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
           {payload.candidates.map((candidate) => (
             <button
               key={candidate.item_id}
-              className="reply-option-btn"
+              className={
+                candidate.item_id === "UNCATALOGED" ? "reply-option-btn reply-option-btn-muted" : "reply-option-btn"
+              }
               disabled={disabled}
               onClick={() => handleCandidateClick(candidate)}
             >
-              {candidate.name} · {candidate.current_stock} in stock
+              {candidate.item_id === "UNCATALOGED"
+                ? candidate.name
+                : `${candidate.name} · ${candidate.current_stock} in stock`}
             </button>
           ))}
         </div>

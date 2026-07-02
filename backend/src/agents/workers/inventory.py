@@ -35,6 +35,18 @@ def ask_user_to_confirm(candidates: list[dict], question: str) -> str:
 
 _TOOLS = [search_items, ask_user_to_confirm]
 
+# Always offered alongside real candidates — pg_trgm's `%` similarity match can return weak,
+# irrelevant hits for almost any query (short/common words especially), so "zero candidates"
+# isn't the only way a genuinely new item shows up here. Selecting this resolves to the same
+# UNCATALOGED sentinel the zero-match pre-check below uses.
+_NOT_LISTED_OPTION = {
+    "item_id": "UNCATALOGED",
+    "name": "None of these — it's a new item",
+    "category": "",
+    "current_stock": 0,
+    "similarity": 0,
+}
+
 _SYSTEM_PROMPT = (
     "You are the Inventory specialist for a procurement system. The user wants to buy an "
     "item described as {item_name!r}. Call search_items with a good search query to find "
@@ -113,14 +125,15 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
                 "Inventory agent finished without asking the user to confirm a candidate"
             )
 
+        candidates = [*args["candidates"], _NOT_LISTED_OPTION]
         return {
             **state,
             "needs_clarification": True,
-            "inventory_candidates": args["candidates"],
+            "inventory_candidates": candidates,
             "clarification_payload": {
                 "type": "inventory_candidate_confirm",
                 "question": args["question"],
-                "candidates": args["candidates"],
+                "candidates": candidates,
             },
         }
     except Exception as exc:
