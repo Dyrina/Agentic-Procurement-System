@@ -1,5 +1,5 @@
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import MagicMock
+
 from src.database.client import SupabaseRepository
 
 
@@ -7,8 +7,12 @@ def _make_repo(data=None):
     """Build a SupabaseRepository with a mocked Supabase client."""
     mock_client = MagicMock()
     mock_client.table.return_value.insert.return_value.execute.return_value.data = [data or {}]
-    mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [data or {}]
-    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [data or {}]
+    mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
+        data or {}
+    ]
+    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        data or {}
+    ]
     repo = SupabaseRepository(client=mock_client)
     return repo, mock_client
 
@@ -40,4 +44,6 @@ def test_rpc_calls_postgres_function_and_returns_rows():
     repo = SupabaseRepository(client=mock_client)
     result = repo.rpc("search_items_by_name", {"query": "dell xps", "match_limit": 5})
     assert result == [{"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "similarity": 0.8}]
-    mock_client.rpc.assert_called_with("search_items_by_name", {"query": "dell xps", "match_limit": 5})
+    mock_client.rpc.assert_called_with(
+        "search_items_by_name", {"query": "dell xps", "match_limit": 5}
+    )

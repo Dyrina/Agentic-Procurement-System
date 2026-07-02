@@ -12,11 +12,13 @@ from src.core.config import get_settings
 
 def _build_llm() -> ChatGoogleGenerativeAI:
     """Construct the small Gemini model used by every worker's ReAct loop."""
-    return ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=get_settings().GOOGLE_API_KEY)
+    return ChatGoogleGenerativeAI(
+        model="gemini-3.1-flash-lite", google_api_key=get_settings().GOOGLE_API_KEY
+    )
 
 
 def _last_tool_call(messages: list[BaseMessage], tool_name: str) -> dict[str, Any] | None:
-    """Return the args of the most recent call to `tool_name` in a ReAct agent's messages, or None."""
+    """Return the args of the most recent call to `tool_name`, or None if never called."""
     for message in reversed(messages):
         if not isinstance(message, AIMessage):
             continue

@@ -24,7 +24,7 @@ def submit_intake(item_name: str, requested_qty: int, constraints: str = "") -> 
 
 @tool
 def flag_ambiguous(question: str) -> str:
-    """Call instead of submit_intake when the item or quantity is unclear — ask the user directly."""
+    """Call instead of submit_intake when the item or quantity is unclear — ask the user."""
     return f"Flagged for clarification: {question}"
 
 
@@ -59,19 +59,27 @@ async def intake_node(state: ProcurementState) -> ProcurementState:
                     **state,
                     "needs_clarification": False,
                     "intake_attempts": attempts,
-                    "error": f"Could not resolve the request after {attempts} attempts: {args['question']}",
-                    "supervisor_history": [*history, _history_entry("FAILED: too many ambiguous attempts")],
+                    "error": f"Unresolved after {attempts} attempts: {args['question']}",
+                    "supervisor_history": [
+                        *history,
+                        _history_entry("FAILED: too many ambiguous attempts"),
+                    ],
                 }
             return {
                 **state,
                 "needs_clarification": True,
                 "intake_attempts": attempts,
-                "clarification_payload": {"type": "intake_clarification", "question": args["question"]},
+                "clarification_payload": {
+                    "type": "intake_clarification",
+                    "question": args["question"],
+                },
             }
 
         args = _last_tool_call(messages, "submit_intake")
         if args is None:
-            raise ValueError("Intake agent finished without calling submit_intake or flag_ambiguous")
+            raise ValueError(
+                "Intake agent finished without calling submit_intake or flag_ambiguous"
+            )
 
         return {
             **state,
@@ -84,7 +92,11 @@ async def intake_node(state: ProcurementState) -> ProcurementState:
             ],
         }
     except Exception as exc:
-        return {**state, "error": str(exc), "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")]}
+        return {
+            **state,
+            "error": str(exc),
+            "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
+        }
 
 
 async def intake_await_node(state: ProcurementState) -> ProcurementState:

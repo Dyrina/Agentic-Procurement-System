@@ -20,7 +20,7 @@ from src.database.client import SupabaseRepository
 
 @tool
 def search_items(query: str) -> list[dict]:
-    """Search the item catalog by approximate name (trigram similarity); returns up to 5 candidates."""
+    """Search the item catalog by approximate name (trigram similarity); up to 5 candidates."""
     db = SupabaseRepository()
     rows = db.rpc("search_items_by_name", {"query": query, "match_limit": 5})
     if not rows:
@@ -51,7 +51,7 @@ def _history_entry(summary: str) -> dict[str, str]:
 
 
 async def _check_stock(item_id: str, requested_qty: int) -> dict:
-    """Deterministic stock lookup for an already-resolved item_id — no ambiguity left, no LLM needed."""
+    """Deterministic stock lookup for an already-resolved item_id — no LLM needed here."""
     db = SupabaseRepository()
     item = db.get_item(item_id)
     if item is None:
@@ -76,17 +76,23 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
                 "inventory_candidates": None,
                 "supervisor_history": [
                     *history,
-                    _history_entry(f"item_id={state['item_id']!r}, stock_sufficient={result['stock_sufficient']}"),
+                    _history_entry(
+                        f"item_id={state['item_id']!r}, "
+                        f"stock_sufficient={result['stock_sufficient']}"
+                    ),
                 ],
             }
 
-        agent = create_react_agent(_build_llm(), _TOOLS, prompt=_SYSTEM_PROMPT.format(item_name=state["item_name"]))
-        result = await agent.ainvoke({
-            "messages": [HumanMessage(content=f"Item requested: {state['item_name']} (qty {state['requested_qty']})")]
-        })
+        agent = create_react_agent(
+            _build_llm(), _TOOLS, prompt=_SYSTEM_PROMPT.format(item_name=state["item_name"])
+        )
+        message = f"Item requested: {state['item_name']} (qty {state['requested_qty']})"
+        result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
         args = _last_tool_call(result["messages"], "ask_user_to_confirm")
         if args is None:
-            raise ValueError("Inventory agent finished without asking the user to confirm a candidate")
+            raise ValueError(
+                "Inventory agent finished without asking the user to confirm a candidate"
+            )
 
         return {
             **state,
@@ -99,11 +105,15 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
             },
         }
     except Exception as exc:
-        return {**state, "error": str(exc), "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")]}
+        return {
+            **state,
+            "error": str(exc),
+            "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
+        }
 
 
 async def inventory_await_node(state: ProcurementState) -> ProcurementState:
-    """Pause node: interrupt()s with the candidate list, resumes with the user's selected_item_id."""
+    """Pause node: interrupt()s with the candidate list, resumes with the selected_item_id."""
     if not state.get("needs_clarification"):
         return state
     answer = interrupt(state["clarification_payload"])
