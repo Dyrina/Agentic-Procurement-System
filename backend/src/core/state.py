@@ -49,10 +49,6 @@ class ProcurementState(TypedDict, total=False):
     extracted_quotes: list[dict[str, Any]]
     # each: {supplier_id, supplier_name, unit_price_sen, quoted_delivery_days, payment_terms}
 
-    # query_history outputs
-    avg_unit_price_sen: float
-    avg_delivery_days: float
-
     # evaluate_suppliers outputs
     evaluated_suppliers: list[dict[str, Any]]
     # each: {supplier_id, supplier_name, unit_price_sen, quoted_delivery_days, payment_terms,

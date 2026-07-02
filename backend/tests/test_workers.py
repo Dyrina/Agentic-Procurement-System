@@ -521,3 +521,130 @@ async def test_sourcing_await_node_send_reminder_then_waits_again():
 
     fake_reminder.assert_awaited_once_with(["c@d.com"])
     assert result["needs_clarification"] is False
+
+
+# ── evaluation ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_purchase_history_tool_wraps_query_history():
+    from src.agents.workers.evaluation import get_purchase_history
+
+    mock_db = MagicMock()
+    mock_db.get_purchase_history.return_value = [{"unit_price_sen": 365000, "delivery_days": 7}]
+    with patch("src.agents.tools.history.SupabaseRepository", return_value=mock_db):
+        result = await get_purchase_history.ainvoke({"item_id": "IT-XPS-15"})
+
+    assert result["avg_unit_price_sen"] == 365000.0
+
+
+def test_get_reference_score_tool_wraps_score_suppliers():
+    from src.agents.workers.evaluation import get_reference_score
+
+    quotes = [
+        {
+            "supplier_id": "SUP-A",
+            "unit_price_sen": 410000,
+            "quoted_delivery_days": 5,
+            "payment_terms": "Net-30",
+        },
+        {
+            "supplier_id": "SUP-B",
+            "unit_price_sen": 395000,
+            "quoted_delivery_days": 2,
+            "payment_terms": "Net-60",
+        },
+    ]
+    result = get_reference_score.invoke(
+        {"quotes": quotes, "avg_unit_price_sen": 365000.0, "avg_delivery_days": 7.0}
+    )
+    recommended = next(r for r in result if r["is_recommended"])
+    assert recommended["supplier_id"] == "SUP-B"
+
+
+def test_write_audit_log_tool_records_decision():
+    from src.agents.workers.evaluation import write_audit_log
+
+    mock_db = MagicMock()
+    evaluated = [
+        {"supplier_id": "SUP-A", "is_recommended": False},
+        {"supplier_id": "SUP-B", "is_recommended": True},
+    ]
+    with patch("src.agents.workers.evaluation.SupabaseRepository", return_value=mock_db):
+        write_audit_log.invoke(
+            {"evaluated_suppliers": evaluated, "overall_reasoning": "SUP-B is cheaper and faster."}
+        )
+
+    mock_db.write_audit_log.assert_called_once()
+    _, kwargs = mock_db.write_audit_log.call_args
+    assert kwargs["action_type"] == "SUPPLIER_EVALUATION"
+    assert kwargs["decision_json"]["recommended_supplier_id"] == "SUP-B"
+    assert kwargs["decision_json"]["overall_reasoning"] == "SUP-B is cheaper and faster."
+
+
+@pytest.mark.asyncio
+async def test_evaluation_node_writes_evaluated_suppliers_from_audit_log_call(fake_llm):
+    from src.agents.workers.evaluation import evaluation_node
+
+    evaluated = [
+        {
+            "supplier_id": "SUP-B",
+            "supplier_name": "Global IT",
+            "unit_price_sen": 395000,
+            "quoted_delivery_days": 2,
+            "payment_terms": "Net-60",
+            "total_score": 92.0,
+            "risk_flags": [],
+            "is_recommended": True,
+            "reasoning": "Best price and delivery, no risk flags.",
+        }
+    ]
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_audit_log",
+                        "args": {
+                            "evaluated_suppliers": evaluated,
+                            "overall_reasoning": "SUP-B wins on price and speed.",
+                        },
+                        "id": "1",
+                    }
+                ],
+            ),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "item_id": "IT-XPS-15", "extracted_quotes": []}
+    with (
+        patch("src.agents.workers.evaluation._build_llm", return_value=llm),
+        patch("src.agents.workers.evaluation.SupabaseRepository", return_value=MagicMock()),
+    ):
+        result = await evaluation_node(state)
+
+    assert result["evaluated_suppliers"] == evaluated
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_evaluation_node_fails_if_agent_skips_audit_log(fake_llm):
+    from src.agents.workers.evaluation import evaluation_node
+
+    llm = fake_llm([AIMessage(content="SUP-B looks best.")])  # no tool call
+    state: ProcurementState = {"session_id": "s1", "item_id": "IT-XPS-15", "extracted_quotes": []}
+    with patch("src.agents.workers.evaluation._build_llm", return_value=llm):
+        result = await evaluation_node(state)
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_evaluation_node_catches_exceptions():
+    from src.agents.workers.evaluation import evaluation_node
+
+    state: ProcurementState = {"session_id": "s1", "item_id": "IT-XPS-15", "extracted_quotes": []}
+    with patch("src.agents.workers.evaluation._build_llm", side_effect=RuntimeError("boom")):
+        result = await evaluation_node(state)
+
+    assert result["error"] == "boom"
