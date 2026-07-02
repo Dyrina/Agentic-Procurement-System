@@ -16,16 +16,18 @@ class ProcurementState(TypedDict, total=False):
     user_message: str
     session_start_ts: str       # ISO timestamp, used as Gmail search lower bound
 
-    # Planning
-    plan: list[str]
-    plan_attempts: int
-    plan_error: str | None
-    validation_passed: bool
+    # Supervisor loop
+    next_worker: str
+    worker_calls: int
+    supervisor_history: list[dict[str, str]]   # [{"worker": str, "summary": str}], deterministic scratchpad
 
-    # Execution
-    current_step: str
-    status: str                 # PLANNING | EXECUTING | AWAITING_APPROVAL | APPROVED | FAILED
+    status: str                 # EXECUTING | AWAITING_INPUT | AWAITING_APPROVAL | APPROVED | FAILED
     error: str | None
+
+    # Intake
+    intake_attempts: int
+    needs_clarification: bool
+    clarification_payload: dict[str, Any] | None
 
     # check_stock outputs
     item_name: str
@@ -33,6 +35,7 @@ class ProcurementState(TypedDict, total=False):
     requested_qty: int
     stock_sufficient: bool
     current_stock: int
+    inventory_candidates: list[dict[str, Any]] | None
 
     # send_rfqs outputs
     rfq_sent_at: str            # ISO timestamp
@@ -40,6 +43,7 @@ class ProcurementState(TypedDict, total=False):
 
     # wait_for_quotes outputs
     all_replied: bool
+    pending_emails: list[str]
 
     # extract_quotes outputs
     extracted_quotes: list[dict[str, Any]]
@@ -52,7 +56,11 @@ class ProcurementState(TypedDict, total=False):
     # evaluate_suppliers outputs
     evaluated_suppliers: list[dict[str, Any]]
     # each: {supplier_id, supplier_name, unit_price_sen, quoted_delivery_days, payment_terms,
-    #        price_score, delivery_score, payment_terms_score, total_score, risk_flags, is_recommended}
+    #        total_score, risk_flags, is_recommended, reasoning}
 
     # generate_report outputs
     report_markdown: str
+
+    # post-approval automation outputs (unchanged)
+    po_pdf_url: str
+    po_number: str
