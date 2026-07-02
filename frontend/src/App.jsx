@@ -15,7 +15,7 @@ import ReplyPrompt from "./ReplyPrompt";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
-const EVENT_TYPES = ["awaiting_input", "report", "approve_ready", "completed", "error"];
+const EVENT_TYPES = ["progress", "awaiting_input", "report", "approve_ready", "completed", "error"];
 
 const PO_STORAGE_KEY = "procureai:purchase_orders";
 
