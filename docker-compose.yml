@@ -8,9 +8,9 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
+      - .env
     volumes:
-      - ./backend:/app/tokens
+      - ./backend/tokens:/app/tokens
     environment:
       - GMAIL_CREDENTIALS_PATH=/app/tokens/credentials.json
       - GMAIL_TOKEN_PATH=/app/tokens/token.json
