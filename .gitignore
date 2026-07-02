@@ -93,3 +93,4 @@ Thumbs.db
 
 *.txt
 *.md
+backend/tokens/
