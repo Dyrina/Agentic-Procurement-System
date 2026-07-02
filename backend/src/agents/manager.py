@@ -48,6 +48,12 @@ async def supervisor_node(state: ProcurementState) -> ProcurementState:
     """Decide the next worker to run given the current state, or stop/fail."""
     if state.get("error"):
         return {**state, "next_worker": "fail"}
+    if state.get("report_markdown"):
+        # Deterministic, not left to the LLM's judgment: a real Gemini call re-ran Reporting
+        # 4 times before deciding to stop, since it only sees a short text summary of history
+        # ("reporting: report assembled"), not the actual report_markdown content, and
+        # apparently found that ambiguous. Checking the field directly is free and infallible.
+        return {**state, "next_worker": "stop"}
 
     calls = state.get("worker_calls", 0) + 1
     if calls > _MAX_WORKER_CALLS:

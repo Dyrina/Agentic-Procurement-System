@@ -719,3 +719,34 @@ async def test_reporting_node_catches_exceptions():
         result = await reporting_node(state)
 
     assert result["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_reporting_node_handles_gemini_3_list_content():
+    """Regression: Gemini 3 'thinking' models return AIMessage.content as a list of parts
+    (each carrying a thought_signature), not a plain string — a live run against the real API
+    showed the raw repr of that list literally rendered into the report before this was fixed."""
+    from src.agents.workers.reporting import reporting_node
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(
+        return_value=AIMessage(
+            content=[
+                {"type": "text", "text": "Stock is sufficient, no purchase needed.", "extras": {"signature": "abc"}}
+            ]
+        )
+    )
+    state: ProcurementState = {
+        "session_id": "s1",
+        "item_name": "Ergonomic Office Chair",
+        "requested_qty": 5,
+        "stock_sufficient": True,
+        "current_stock": 30,
+        "evaluated_suppliers": [],
+    }
+    with patch("src.agents.workers.reporting._build_llm", return_value=mock_llm):
+        result = await reporting_node(state)
+
+    assert "Stock is sufficient, no purchase needed." in result["report_markdown"]
+    assert "extras" not in result["report_markdown"]
+    assert "signature" not in result["report_markdown"]

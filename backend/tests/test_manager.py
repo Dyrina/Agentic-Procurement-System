@@ -58,6 +58,23 @@ async def test_supervisor_node_fails_after_max_worker_calls():
 
 
 @pytest.mark.asyncio
+async def test_supervisor_node_short_circuits_to_stop_once_report_exists():
+    """Regression: a live run against the real Gemini API re-ran Reporting 4 times before
+    deciding to stop, because supervisor_history only carries a short text summary
+    ("reporting: report assembled"), not the actual report_markdown — apparently ambiguous
+    enough for the model to loop. Checking the field directly is deterministic and free."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("supervisor should not call the LLM once report_markdown exists")
+
+    state = {"session_id": "s1", "user_message": "x", "report_markdown": "## Report\n..."}
+    with patch("src.agents.manager.ChatGoogleGenerativeAI", side_effect=_boom):
+        result = await supervisor_node(state)
+
+    assert result["next_worker"] == "stop"
+
+
+@pytest.mark.asyncio
 async def test_supervisor_node_asks_llm_and_increments_worker_calls(fake_supervisor_llm):
     llm = fake_supervisor_llm([SimpleNamespace(next="intake", reason="need item info")])
     state = {"session_id": "s1", "user_message": "buy some chairs", "worker_calls": 2}

@@ -26,3 +26,11 @@ def _last_tool_call(messages: list[BaseMessage], tool_name: str) -> dict[str, An
             if call["name"] == tool_name:
                 return call["args"]
     return None
+
+
+def _extract_text(content: str | list) -> str:
+    """AIMessage.content is usually a plain string, but Gemini 3 'thinking' models return a
+    list of content parts (each carrying a thought_signature) instead — pull just the text out."""
+    if isinstance(content, str):
+        return content
+    return "".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")

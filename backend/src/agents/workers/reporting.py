@@ -11,7 +11,7 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage
 
 from src.agents.tools.report import generate_report
-from src.agents.workers import _build_llm
+from src.agents.workers import _build_llm, _extract_text
 from src.core.state import ProcurementState
 
 
@@ -32,7 +32,7 @@ async def _write_executive_summary(state: ProcurementState) -> str:
         f"Recommended supplier: {recommended}\n"
     )
     response = await _build_llm().ainvoke([HumanMessage(content=prompt)])
-    return response.content
+    return _extract_text(response.content)
 
 
 async def reporting_node(state: ProcurementState) -> ProcurementState:
