@@ -136,60 +136,6 @@ nav button:disabled {
   padding: 1px 7px;
 }
 
-.mode-box {
-  margin-top: auto;
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mode-label {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-.mode-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  padding: 4px 9px;
-  border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-}
-
-.mode-pill.mock {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.mode-pill.live {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.mode-note {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-  margin: 0;
-}
-
-.mode-note svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--error);
-}
-
 /* ---------- Main ---------- */
 
 .main {
@@ -304,6 +250,16 @@ nav button:disabled {
   color: var(--error);
 }
 
+.status-awaiting-input {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.status-completed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
 .chat-window {
   flex: 1;
   overflow-y: auto;
@@ -407,45 +363,79 @@ nav button:disabled {
   font-size: 0.85rem;
 }
 
+.reply-prompt p {
+  margin: 0 0 10px;
+}
+
+.reply-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reply-option-btn {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 0.84rem;
+  text-align: left;
+}
+
+.reply-option-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.reply-option-btn:disabled {
+  opacity: 0.6;
+}
+
+.reply-text-form {
+  display: flex;
+  gap: 8px;
+}
+
+.reply-text-form input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.reply-text-form button {
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  padding: 8px 14px;
+  color: #171310;
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.reply-text-form button:disabled {
+  opacity: 0.6;
+}
+
+.completed-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  color: var(--success);
+  font-size: 0.85rem;
+}
+
 .chat-input {
   border-top: 1px solid var(--border);
   padding: 16px 24px 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.structured-fields {
-  display: flex;
-  gap: 8px;
-}
-
-.field {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field-qty {
-  flex: 0 0 90px;
-}
-
-.field label {
-  font-family: var(--font-mono);
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-.field input {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: var(--text);
-  font-size: 0.82rem;
 }
 
 .message-row {
@@ -464,7 +454,6 @@ nav button:disabled {
 }
 
 .message-row input:focus,
-.field input:focus,
 .user-box input:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -483,13 +472,6 @@ nav button:disabled {
 
 .message-row button:disabled {
   opacity: 0.6;
-}
-
-.field-note {
-  margin: 0;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  line-height: 1.4;
 }
 
 /* ---------- State panel ---------- */
@@ -542,52 +524,6 @@ nav button:disabled {
   color: var(--text-muted);
   font-size: 0.8rem;
   margin: 0;
-}
-
-.plan-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-
-.plan-step:last-child {
-  border-bottom: none;
-}
-
-.plan-step small {
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
-.plan-step span {
-  flex: 1;
-}
-
-.plan-step svg {
-  opacity: 0.25;
-}
-
-.plan-step.active {
-  color: var(--accent);
-}
-
-.plan-step.active svg {
-  color: var(--accent);
-  opacity: 1;
-}
-
-.plan-step.done {
-  color: var(--text);
-}
-
-.plan-step.done svg {
-  color: var(--success);
-  opacity: 1;
 }
 
 .log-box {
