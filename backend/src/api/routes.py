@@ -199,15 +199,29 @@ async def _drive_graph(session_id: str, graph_input: dict | Command) -> None:
         return
 
     await push_event(session_id, "report", {"markdown": result.get("report_markdown", "")})
-    await push_event(
-        session_id,
-        "approve_ready",
-        {"session_id": session_id, "message": "Approve to generate purchase order"},
-    )
+
+    # Inventory can report stock as already sufficient, in which case the supervisor correctly
+    # skips Sourcing/Evaluation entirely — there's no recommended supplier and nothing for
+    # /approve to act on. Only offer approval when there's actually a PO to generate.
+    if result.get("evaluated_suppliers"):
+        await push_event(
+            session_id,
+            "approve_ready",
+            {"session_id": session_id, "message": "Approve to generate purchase order"},
+        )
+        final_status = "AWAITING_APPROVAL"
+    else:
+        await push_event(
+            session_id,
+            "completed",
+            {"session_id": session_id, "message": "No purchase order needed — stock is sufficient."},
+        )
+        final_status = "COMPLETED"
+
     await end_stream(session_id)
     db.update_evaluation(
         session_id,
-        status="AWAITING_APPROVAL",
+        status=final_status,
         report_markdown=result.get("report_markdown", ""),
         state_json=dict(result),
     )
