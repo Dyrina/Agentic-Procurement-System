@@ -6,46 +6,6 @@ import pytest
 from src.core.state import ProcurementState
 
 
-# ── check_stock ──────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_check_stock_sufficient():
-    mock_db = MagicMock()
-    mock_db.select.return_value = [
-        {"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "current_stock": 50}
-    ]
-    with patch("src.agents.tools.stock.SupabaseRepository", return_value=mock_db):
-        from src.agents.tools.stock import check_stock_handler
-        state: ProcurementState = {
-            "session_id": "s1",
-            "user_message": "Buy 30 laptops",
-            "item_name": "Dell XPS 15 Laptop",
-            "requested_qty": 30,
-        }
-        result = await check_stock_handler(state)
-        assert result["stock_sufficient"] is True
-        assert result["item_id"] == "IT-XPS-15"
-        assert result["current_stock"] == 50
-
-
-@pytest.mark.asyncio
-async def test_check_stock_insufficient():
-    mock_db = MagicMock()
-    mock_db.select.return_value = [
-        {"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "current_stock": 4}
-    ]
-    with patch("src.agents.tools.stock.SupabaseRepository", return_value=mock_db):
-        from src.agents.tools.stock import check_stock_handler
-        state: ProcurementState = {
-            "session_id": "s1",
-            "user_message": "Buy 30 laptops",
-            "item_name": "Dell XPS 15 Laptop",
-            "requested_qty": 30,
-        }
-        result = await check_stock_handler(state)
-        assert result["stock_sufficient"] is False
-
-
 # ── query_history ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

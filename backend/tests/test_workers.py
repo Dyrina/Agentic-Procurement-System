@@ -130,3 +130,74 @@ async def test_intake_await_node_resumes_with_clarified_message():
     assert result["needs_clarification"] is False
     assert result["clarification_payload"] is None
     assert "30 units" in result["user_message"]
+
+
+# ── inventory ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_inventory_node_always_asks_for_confirmation(fake_llm):
+    from src.agents.workers.inventory import inventory_node
+
+    candidates = [{"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "similarity": 0.9}]
+    llm = fake_llm([
+        AIMessage(content="", tool_calls=[{
+            "name": "search_items", "args": {"query": "Dell XPS 15"}, "id": "1",
+        }]),
+        AIMessage(content="", tool_calls=[{
+            "name": "ask_user_to_confirm",
+            "args": {"candidates": candidates, "question": "Did you mean Dell XPS 15 Laptop?"},
+            "id": "2",
+        }]),
+    ])
+    mock_db = MagicMock()
+    mock_db.rpc.return_value = candidates
+    state: ProcurementState = {"session_id": "s1", "item_name": "Dell XPS 15", "requested_qty": 30}
+    with patch("src.agents.workers.inventory._build_llm", return_value=llm), \
+         patch("src.agents.workers.inventory.SupabaseRepository", return_value=mock_db):
+        result = await inventory_node(state)
+
+    assert result["needs_clarification"] is True
+    assert result["clarification_payload"]["candidates"] == candidates
+    assert "item_id" not in result  # never silently picked
+
+
+@pytest.mark.asyncio
+async def test_inventory_node_fails_if_agent_skips_confirmation(fake_llm):
+    from src.agents.workers.inventory import inventory_node
+
+    llm = fake_llm([AIMessage(content="Dell XPS 15 Laptop it is.")])  # no tool call at all
+    state: ProcurementState = {"session_id": "s1", "item_name": "Dell XPS 15", "requested_qty": 30}
+    with patch("src.agents.workers.inventory._build_llm", return_value=llm):
+        result = await inventory_node(state)
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_inventory_node_checks_stock_once_item_id_confirmed():
+    from src.agents.workers.inventory import inventory_node
+
+    mock_db = MagicMock()
+    mock_db.get_item.return_value = {"item_id": "IT-XPS-15", "current_stock": 4}
+    state: ProcurementState = {"session_id": "s1", "item_id": "IT-XPS-15", "requested_qty": 30}
+    with patch("src.agents.workers.inventory.SupabaseRepository", return_value=mock_db):
+        result = await inventory_node(state)
+
+    assert result["current_stock"] == 4
+    assert result["stock_sufficient"] is False
+
+
+@pytest.mark.asyncio
+async def test_inventory_await_node_resumes_with_selected_item_id():
+    from src.agents.workers.inventory import inventory_await_node
+
+    state: ProcurementState = {
+        "session_id": "s1",
+        "needs_clarification": True,
+        "clarification_payload": {"type": "inventory_candidate_confirm", "candidates": [], "question": "?"},
+    }
+    with patch("src.agents.workers.inventory.interrupt", return_value={"selected_item_id": "IT-XPS-15"}):
+        result = await inventory_await_node(state)
+
+    assert result["item_id"] == "IT-XPS-15"
+    assert result["needs_clarification"] is False
