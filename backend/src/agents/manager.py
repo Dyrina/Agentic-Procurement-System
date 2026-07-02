@@ -27,6 +27,7 @@ from src.agents.workers.intake import intake_await_node, intake_node
 from src.agents.workers.inventory import inventory_await_node, inventory_node
 from src.agents.workers.reporting import reporting_node
 from src.agents.workers.sourcing import sourcing_await_node, sourcing_node
+from src.api.sse import push_event
 from src.core.config import get_checkpointer, get_settings
 from src.core.state import ProcurementState
 
@@ -34,6 +35,14 @@ from src.core.state import ProcurementState
 _MAX_WORKER_CALLS = 15
 
 _WORKER_NAMES = ("intake", "inventory", "sourcing", "evaluation", "reporting")
+
+_PROGRESS_MESSAGES = {
+    "intake": "Reading your request...",
+    "inventory": "Checking stock levels...",
+    "sourcing": "Sourcing quotes from suppliers...",
+    "evaluation": "Evaluating supplier quotes...",
+    "reporting": "Generating report...",
+}
 
 
 class _NextWorker(BaseModel):
@@ -81,12 +90,37 @@ async def supervisor_node(state: ProcurementState) -> ProcurementState:
         "Guidance:\n"
         "- intake first if item_name/requested_qty are not yet known.\n"
         "- inventory next, to resolve the item and check stock.\n"
-        "- if stock_sufficient is true, skip sourcing/evaluation and go straight to reporting.\n"
         "- sourcing before evaluation (evaluation needs extracted_quotes).\n"
         "- stop once report_markdown exists."
     )
     result = await structured.ainvoke([HumanMessage(content=prompt)])
-    return {**state, "next_worker": result.next, "worker_calls": calls}
+    next_worker = result.next
+    # Same failure mode as the report_markdown check above: the LLM sometimes treats "RFQ sent"
+    # as sourcing being done and jumps to evaluation before quotes are actually extracted.
+    # Evaluation has nothing to work with then and fabricates a full quote comparison out of
+    # nowhere instead of erroring — enforce the ordering structurally here too.
+    if next_worker == "evaluation" and not state.get("extracted_quotes"):
+        next_worker = "sourcing"
+    # Same failure mode again: with no explicit "skip sourcing if stock is sufficient" hint
+    # left in the prompt, the LLM can still independently decide stock looks fine and jump
+    # straight from inventory to reporting, skipping the purchase pipeline the manager
+    # explicitly asked for. requested_qty means "buy this many", not "top up to this level" —
+    # so sourcing/evaluation must always run for an explicit purchase request, never inferred
+    # away from stock level. "evaluated_suppliers" absent (vs. present-but-empty) means
+    # evaluation genuinely hasn't run yet.
+    if next_worker == "reporting" and "evaluated_suppliers" not in state:
+        next_worker = "sourcing"
+    # Same failure mode again: the LLM can decide to "stop" on its own reasoning (e.g. "stock
+    # looks sufficient, nothing more to do") without ever routing through reporting, leaving
+    # report_markdown empty. Reporting must always run before stop — enforce it structurally
+    # instead of trusting the LLM to remember a prompted rule.
+    if next_worker == "stop" and not state.get("report_markdown"):
+        next_worker = "reporting"
+    if next_worker in _PROGRESS_MESSAGES:
+        await push_event(
+            state["session_id"], "progress", {"step": next_worker, "message": _PROGRESS_MESSAGES[next_worker]}
+        )
+    return {**state, "next_worker": next_worker, "worker_calls": calls}
 
 
 def _route_from_supervisor(state: ProcurementState) -> str:
