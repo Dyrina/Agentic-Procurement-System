@@ -10,8 +10,7 @@ services:
     env_file:
       - ./backend/.env
     volumes:
-      # Persist Gmail OAuth tokens across container restarts
-      - gmail_tokens:/app/tokens
+      - ./backend:/app/tokens
     environment:
       - GMAIL_CREDENTIALS_PATH=/app/tokens/credentials.json
       - GMAIL_TOKEN_PATH=/app/tokens/token.json
@@ -23,18 +22,15 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Frontend (placeholder — will be added later) ───────────────────────────
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   container_name: procurement-frontend
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     backend:
-  #       condition: service_healthy
-  #   restart: unless-stopped
-
-volumes:
-  gmail_tokens:
+  # ── Frontend Web UI ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: procurement-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
