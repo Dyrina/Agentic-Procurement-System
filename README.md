@@ -10,7 +10,6 @@ Procurement officers spend significant time on repetitive coordination work: sen
 
 - **Managers / requesters** — send a single chat message describing what they need (e.g. "Buy 30 Dell XPS 15 laptops") and receive a recommendation report to review.
 - **Approving managers** — review the AI-generated supplier recommendation and click **Approve** before any purchase order is committed. Approval is a required human checkpoint, not a formality the system can bypass.
-- **Backend/ops engineers** — operate and monitor the agent pipeline, Gmail integration, and Supabase data.
 
 ### System goal
 
@@ -83,27 +82,27 @@ Any step failure aborts the run, streams an `error` event, and preserves state i
 
 ### Environment setup
 
-Two separate env files:
+A single `.env` file at the root of the project contains all configuration for both the backend and frontend. Variables are passed to the frontend via build arguments in Docker Compose.
 
-**Backend/root `.env`** (consumed by `docker-compose.yml`):
+**Root `.env`**:
 
 ```bash
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-supabase-anon-or-service-key
+SUPABASE_DB_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
+
+# Google Gemini API Key
 GOOGLE_API_KEY=your-google-api-key
+
+# Gmail OAuth
 GMAIL_CREDENTIALS_PATH=backend/tokens/credentials.json
 GMAIL_TOKEN_PATH=backend/tokens/token.json
 GMAIL_SENDER_EMAIL=your-gmail@gmail.com
-```
 
-**Frontend `frontend/.env`:**
-
-```bash
+# Frontend
 VITE_BACKEND_URL=http://localhost:8000
-VITE_USE_MOCK_STREAM=true
 ```
-
-`VITE_USE_MOCK_STREAM=true` runs the chat UI entirely off a local mock SSE fixture, with no backend required — this is the current default since the backend routes below are still being finalized.
 
 ### Dependencies
 
@@ -157,7 +156,6 @@ npm run dev
 | **Human-in-the-loop approval**             | Implemented (frontend) / Designed (backend)                    | No purchase order or supplier commitment happens without an explicit **Approve** click; the Automation Agent is architecturally excluded from the LLM's plan and can only be reached via this action.                                              |
 | **Deterministic supplier scoring**         | Designed, backend pending                                      | Weighted scoring (price 55%, delivery 30%, payment terms 15%) plus rule-based risk flags (e.g. price >10% above historical average) — no LLM judgment involved, for reproducibility.                                                               |
 | **Purchase order history (Reports view)**  | Implemented (frontend, local only)                             | Every approved PO is recorded client-side (`localStorage`) and listed with item, quantity, requester, timestamp, and PDF link. This is a stopgap — see Limitations.                                                                                |
-| **Mock/live data source toggle**           | Implemented (frontend)                                         | `VITE_USE_MOCK_STREAM` switches the entire chat flow between a local fixture and the real backend without code changes, so frontend work isn't blocked on backend delivery.                                                                        |
 | **Gmail RFQ send/receive**                 | Designed, backend pending                                      | Outbound RFQ emails to registered supplier addresses; inbound polling for replies (15s interval, 5-minute timeout) and PDF quote extraction via `pypdf` + Gemini structured output.                                                                |
 | **Audit trail**                            | Placeholder only                                               | A disabled nav item; the `audit_logs` table exists in the schema but no endpoint or UI reads from it yet.                                                                                                                                          |
 
@@ -188,7 +186,7 @@ npm run dev
 
 ### Known issues
 
-- **The frontend/backend contract isn't finalized.** Free-text requests don't yet have a confirmed way to resolve a structured `item_id` before `check_stock` runs, the chat/stream/approve routes aren't confirmed live, and CORS/auth aren't configured — the frontend defaults to a mock stream until these are settled with the backend team.
+- **The frontend/backend contract isn't finalized.** Free-text requests don't yet have a confirmed way to resolve a structured `item_id` before `check_stock` runs, the chat/stream/approve routes aren't confirmed live, and CORS/auth aren't configured.
 - **Reports and Audit Trail aren't backend-backed yet.** Purchase order history is stored client-side in `localStorage` (not fetched from Supabase, so it won't show POs approved elsewhere), and Audit Trail has no endpoint or UI wired up at all despite the `audit_logs` table existing in the schema.
 
 ### Future improvements
