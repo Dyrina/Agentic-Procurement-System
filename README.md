@@ -1,4 +1,4 @@
-# Agentic Procurement System
+# ProcureAI
 
 ## 1. Project Overview
 
