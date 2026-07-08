@@ -10,10 +10,16 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from src.core.config import get_settings
 
 
-def _build_llm() -> ChatGoogleGenerativeAI:
-    """Construct the small Gemini model used by every worker's ReAct loop."""
+def _build_llm(tier: str = "fast") -> ChatGoogleGenerativeAI:
+    """Construct the Gemini model for a worker. tier="fast" (default) for tasks whose errors
+    are caught downstream by a schema or a human gate; tier="smart" for judgment where errors
+    cost money or land verbatim in front of the user (quote parsing, evaluation, report prose).
+    timeout/max_retries so one hung Gemini call can't freeze a session forever.
+    60s not 30 — the smart tier is a thinking model and legitimately runs past 30s."""
+    settings = get_settings()
+    model = settings.MODEL_SMART if tier == "smart" else settings.MODEL_FAST
     return ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite", google_api_key=get_settings().GOOGLE_API_KEY
+        model=model, google_api_key=settings.GOOGLE_API_KEY, timeout=60, max_retries=2
     )
 
 
@@ -26,6 +32,12 @@ def _last_tool_call(messages: list[BaseMessage], tool_name: str) -> dict[str, An
             if call["name"] == tool_name:
                 return call["args"]
     return None
+
+
+def _cancel_requested(answer: Any) -> bool:
+    """True when an interrupt() resume payload is the universal cancel action — every await
+    node must honour it so the user always has an exit."""
+    return isinstance(answer, dict) and answer.get("action") == "cancel"
 
 
 def _extract_text(content: str | list) -> str:

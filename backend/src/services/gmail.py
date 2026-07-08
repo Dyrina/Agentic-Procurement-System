@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 from email.mime.text import MIMEText
 from typing import Any
 
@@ -38,6 +39,13 @@ def get_gmail_service(credentials_path: str, token_path: str):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            if not sys.stdin.isatty():
+                # run_local_server blocks forever waiting for a browser login — on a headless
+                # server that's a silently hung session, so fail loudly instead.
+                raise RuntimeError(
+                    f"Gmail OAuth token missing or expired ({token_path}) and no terminal is "
+                    "attached for the interactive login — regenerate the token from a terminal."
+                )
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
         with open(token_path, "w") as f:

@@ -82,7 +82,8 @@ function useProcurementStream(sessionId) {
       });
     }
 
-    es.onerror = () => es.close();
+    // Don't close on error — EventSource auto-reconnects after network blips, and the
+    // backend replays session state on reconnect. Terminal events above close it for real.
     return () => es.close();
   }, [sessionId]);
 

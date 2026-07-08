@@ -1,26 +1,26 @@
 """agents/manager.py — supervisor + worker-agent LangGraph state machine.
 
-Replaces the old single-shot plan_node/validate_node/execute_node pipeline: instead of an LLM
-picking a fixed step list once upfront and running it blind, supervisor_node is re-invoked
-after every worker returns, so it can skip steps that turned out unnecessary (e.g. stock
-already sufficient) or route to "fail" the moment a worker reports an error, instead of a
-bare exception aborting the whole session.
+Layered ownership ("deterministic hub, agentic spokes, human gates"):
+  - decide_next (pure code) owns control flow — the procurement pipeline is predictable,
+    so routing is derived from data availability, not asked of an LLM.
+  - Workers own judgment (intent parsing, quote extraction, supplier evaluation) via their
+    own LLM tool-calling loops.
+  - Humans own authority via interrupt() gates: item confirmation, sourcing-timeout
+    escalation, and the final PO approval.
 
-Ordering between workers is enforced structurally by data availability (Evaluation has
-nothing to call on until Sourcing has produced extracted_quotes) rather than by a separate
-plan-validation layer — there is no equivalent of the old validate_plan/ORDERING_CONSTRAINTS.
+The supervisor is re-invoked after every worker returns, so it reacts to what actually
+happened (skip sourcing on a satisfied ensure_stock request, route to "fail" the moment a
+worker reports an error) instead of running a stale upfront plan. Ordering between workers
+is enforced structurally by data availability — Evaluation has nothing to work with until
+Sourcing has produced extracted_quotes.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
 
-from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel
 
 from src.agents.workers.evaluation import evaluation_node
 from src.agents.workers.intake import intake_await_node, intake_node
@@ -28,10 +28,11 @@ from src.agents.workers.inventory import inventory_await_node, inventory_node
 from src.agents.workers.reporting import reporting_node
 from src.agents.workers.sourcing import sourcing_await_node, sourcing_node
 from src.api.sse import push_event
-from src.core.config import get_checkpointer, get_settings
+from src.core.config import get_checkpointer
 from src.core.state import ProcurementState
 
-# ponytail: flat safety cap against a runaway supervisor loop, raise if real flows need more
+# ponytail: flat safety cap against a runaway loop (e.g. sourcing that never yields quotes),
+# raise if real flows need more
 _MAX_WORKER_CALLS = 15
 
 _WORKER_NAMES = ("intake", "inventory", "sourcing", "evaluation", "reporting")
@@ -45,24 +46,53 @@ _PROGRESS_MESSAGES = {
 }
 
 
-class _NextWorker(BaseModel):
-    next: Literal["intake", "inventory", "sourcing", "evaluation", "reporting", "stop", "fail"]
-    reason: str
+# ── Supervisor: deterministic router ─────────────────────────────────────────
 
 
-# ── Supervisor node ──────────────────────────────────────────────────────────
+def decide_next(state: ProcurementState) -> str:
+    """Pick the next node from state alone.
+
+    Each state field is produced by exactly one worker, so "what's missing" fully determines
+    "what runs next". LLMs decide *content* inside the workers (what the user meant, what a
+    quote says, which supplier wins); this function decides *sequence*.
+
+    Intent (classified by Intake) gates side effects:
+      - "buy": explicit purchase — always source, regardless of stock level.
+      - "ensure_stock": top-up — source only if stock can't cover the request.
+      - "check_stock": pure query — must NEVER reach sourcing (no outbound emails).
+    """
+    if state.get("cancelled"):
+        return "stop"
+    if state.get("error"):
+        return "fail"
+    if state.get("completion_message"):
+        # Intake rejected the request as out-of-scope — the message is the final answer.
+        return "stop"
+    if state.get("report_markdown"):
+        return "stop"
+    if not state.get("item_name"):
+        return "intake"
+    if not state.get("item_id") or "stock_sufficient" not in state:
+        # Inventory has two jobs — resolve the item AND check its stock — so it isn't done
+        # until both fields exist (item_id can arrive pre-resolved, e.g. after a resume).
+        return "inventory"
+    if state.get("intent") == "check_stock":
+        return "reporting"
+    if state.get("intent") == "ensure_stock" and state.get("stock_sufficient"):
+        return "reporting"
+    if not state.get("extracted_quotes"):
+        return "sourcing"
+    if "evaluated_suppliers" not in state:
+        # Present-but-empty means Evaluation ran and found nothing — don't re-run it.
+        return "evaluation"
+    return "reporting"
 
 
 async def supervisor_node(state: ProcurementState) -> ProcurementState:
-    """Decide the next worker to run given the current state, or stop/fail."""
-    if state.get("error"):
-        return {**state, "next_worker": "fail"}
-    if state.get("report_markdown"):
-        # Deterministic, not left to the LLM's judgment: a real Gemini call re-ran Reporting
-        # 4 times before deciding to stop, since it only sees a short text summary of history
-        # ("reporting: report assembled"), not the actual report_markdown content, and
-        # apparently found that ambiguous. Checking the field directly is free and infallible.
-        return {**state, "next_worker": "stop"}
+    """Route to the next worker (with iteration cap + progress event) or stop/fail."""
+    next_worker = decide_next(state)
+    if next_worker not in _WORKER_NAMES:
+        return {**state, "next_worker": next_worker}
 
     calls = state.get("worker_calls", 0) + 1
     if calls > _MAX_WORKER_CALLS:
@@ -72,54 +102,11 @@ async def supervisor_node(state: ProcurementState) -> ProcurementState:
             "error": "Exceeded max supervisor iterations",
             "worker_calls": calls,
         }
-
-    settings = get_settings()
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite", google_api_key=settings.GOOGLE_API_KEY
+    await push_event(
+        state["session_id"],
+        "progress",
+        {"step": next_worker, "message": _PROGRESS_MESSAGES[next_worker]},
     )
-    structured = llm.with_structured_output(_NextWorker)
-
-    history_lines = "\n".join(
-        f"- {h['worker']}: {h['summary']}" for h in state.get("supervisor_history", [])
-    )
-    prompt = (
-        "You are the procurement supervisor. Pick the next specialist to run, or 'stop' once "
-        "report_markdown is ready, or 'fail' if the request genuinely cannot proceed.\n\n"
-        f"User request: {state.get('user_message', '')}\n\n"
-        f"Progress so far:\n{history_lines or '(nothing yet)'}\n\n"
-        "Guidance:\n"
-        "- intake first if item_name/requested_qty are not yet known.\n"
-        "- inventory next, to resolve the item and check stock.\n"
-        "- sourcing before evaluation (evaluation needs extracted_quotes).\n"
-        "- stop once report_markdown exists."
-    )
-    result = await structured.ainvoke([HumanMessage(content=prompt)])
-    next_worker = result.next
-    # Same failure mode as the report_markdown check above: the LLM sometimes treats "RFQ sent"
-    # as sourcing being done and jumps to evaluation before quotes are actually extracted.
-    # Evaluation has nothing to work with then and fabricates a full quote comparison out of
-    # nowhere instead of erroring — enforce the ordering structurally here too.
-    if next_worker == "evaluation" and not state.get("extracted_quotes"):
-        next_worker = "sourcing"
-    # Same failure mode again: with no explicit "skip sourcing if stock is sufficient" hint
-    # left in the prompt, the LLM can still independently decide stock looks fine and jump
-    # straight from inventory to reporting, skipping the purchase pipeline the manager
-    # explicitly asked for. requested_qty means "buy this many", not "top up to this level" —
-    # so sourcing/evaluation must always run for an explicit purchase request, never inferred
-    # away from stock level. "evaluated_suppliers" absent (vs. present-but-empty) means
-    # evaluation genuinely hasn't run yet.
-    if next_worker == "reporting" and "evaluated_suppliers" not in state:
-        next_worker = "sourcing"
-    # Same failure mode again: the LLM can decide to "stop" on its own reasoning (e.g. "stock
-    # looks sufficient, nothing more to do") without ever routing through reporting, leaving
-    # report_markdown empty. Reporting must always run before stop — enforce it structurally
-    # instead of trusting the LLM to remember a prompted rule.
-    if next_worker == "stop" and not state.get("report_markdown"):
-        next_worker = "reporting"
-    if next_worker in _PROGRESS_MESSAGES:
-        await push_event(
-            state["session_id"], "progress", {"step": next_worker, "message": _PROGRESS_MESSAGES[next_worker]}
-        )
     return {**state, "next_worker": next_worker, "worker_calls": calls}
 
 
@@ -132,27 +119,34 @@ def _route_from_supervisor(state: ProcurementState) -> str:
     return next_worker
 
 
-def _route_on_clarification(state: ProcurementState, await_node: str) -> str:
-    return await_node if state.get("needs_clarification") else "supervisor"
+def _route_after_worker(await_node: str):
+    """Worker → its await node when clarification is pending, else back to the supervisor."""
+
+    def route(state: ProcurementState) -> str:
+        return await_node if state.get("needs_clarification") else "supervisor"
+
+    return route
 
 
-def _route_after_intake(state: ProcurementState) -> str:
-    return _route_on_clarification(state, "intake_await")
+def _route_after_await(worker: str):
+    """Await → back to its worker with the answer, or to the supervisor if the user cancelled."""
 
+    def route(state: ProcurementState) -> str:
+        return "supervisor" if state.get("cancelled") else worker
 
-def _route_after_inventory(state: ProcurementState) -> str:
-    return _route_on_clarification(state, "inventory_await")
-
-
-def _route_after_sourcing(state: ProcurementState) -> str:
-    return _route_on_clarification(state, "sourcing_await")
+    return route
 
 
 # ── Terminal nodes ───────────────────────────────────────────────────────────
 
 
 async def finalize_node(state: ProcurementState) -> ProcurementState:
-    return {**state, "status": "AWAITING_APPROVAL"}
+    if state.get("cancelled"):
+        return {**state, "status": "CANCELLED"}
+    if state.get("evaluated_suppliers"):
+        return {**state, "status": "AWAITING_APPROVAL"}
+    # check_stock queries, satisfied ensure_stock requests, out-of-scope rejections.
+    return {**state, "status": "COMPLETED"}
 
 
 async def error_node(state: ProcurementState) -> ProcurementState:
@@ -184,24 +178,18 @@ def build_manager_graph(checkpointer: BaseCheckpointSaver | None = None):
         {**{name: name for name in _WORKER_NAMES}, "finalize": "finalize", "error": "error"},
     )
 
-    graph.add_conditional_edges(
-        "intake", _route_after_intake, {"intake_await": "intake_await", "supervisor": "supervisor"}
-    )
-    graph.add_edge("intake_await", "intake")
-
-    graph.add_conditional_edges(
-        "inventory",
-        _route_after_inventory,
-        {"inventory_await": "inventory_await", "supervisor": "supervisor"},
-    )
-    graph.add_edge("inventory_await", "inventory")
-
-    graph.add_conditional_edges(
-        "sourcing",
-        _route_after_sourcing,
-        {"sourcing_await": "sourcing_await", "supervisor": "supervisor"},
-    )
-    graph.add_edge("sourcing_await", "sourcing")
+    for worker in ("intake", "inventory", "sourcing"):
+        await_node = f"{worker}_await"
+        graph.add_conditional_edges(
+            worker,
+            _route_after_worker(await_node),
+            {await_node: await_node, "supervisor": "supervisor"},
+        )
+        graph.add_conditional_edges(
+            await_node,
+            _route_after_await(worker),
+            {worker: worker, "supervisor": "supervisor"},
+        )
 
     graph.add_edge("evaluation", "supervisor")
     graph.add_edge("reporting", "supervisor")

@@ -75,6 +75,14 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
           </button>
         </form>
       )}
+
+      <button
+        className="reply-option-btn reply-option-btn-muted"
+        disabled={disabled}
+        onClick={() => onReply({ action: "cancel" }, "Cancel request")}
+      >
+        Cancel request
+      </button>
     </div>
   );
 }

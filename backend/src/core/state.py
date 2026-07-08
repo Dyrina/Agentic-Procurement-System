@@ -22,13 +22,16 @@ class ProcurementState(TypedDict, total=False):
     worker_calls: int
     supervisor_history: list[dict[str, str]]  # [{"worker": str, "summary": str}], deterministic
 
-    status: str                 # EXECUTING | AWAITING_INPUT | AWAITING_APPROVAL | APPROVED | FAILED
+    status: str                 # AWAITING_INPUT | AWAITING_APPROVAL | APPROVED | COMPLETED | CANCELLED | FAILED
     error: str | None
+    cancelled: bool             # user chose "cancel" at any interrupt gate
+    completion_message: str     # terminal user-facing answer with no report (e.g. out-of-scope rejection)
 
     # Intake
     intake_attempts: int
     needs_clarification: bool
     clarification_payload: dict[str, Any] | None
+    intent: str                 # buy | ensure_stock | check_stock — gates sourcing side effects
 
     # check_stock outputs
     item_name: str

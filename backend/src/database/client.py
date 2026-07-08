@@ -7,6 +7,7 @@ the rest of the application doesn't couple directly to the raw SDK calls.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -62,24 +63,11 @@ class SupabaseRepository:
         response = query.execute()
         return response.data
 
-    def delete(self, table: str, filters: dict[str, Any]) -> list[dict[str, Any]]:
-        """DELETE rows matching *filters*."""
-        query = self._client.table(table).delete()
-        for col, val in filters.items():
-            query = query.eq(col, val)
-        response = query.execute()
-        return response.data
-
     def rpc(self, fn_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         """Call a Postgres function (e.g. search_items_by_name) and return its rows."""
         return self._client.rpc(fn_name, params).execute().data
 
     # ── Domain-specific convenience methods ─────────────────────────────
-
-    def get_supplier(self, supplier_id: str) -> dict[str, Any] | None:
-        """Fetch a single supplier by ID."""
-        rows = self.select("suppliers", filters={"supplier_id": supplier_id})
-        return rows[0] if rows else None
 
     def get_all_suppliers(self) -> list[dict[str, Any]]:
         """Return every supplier row."""
@@ -103,25 +91,6 @@ class SupabaseRepository:
             filters["supplier_id"] = supplier_id
         return self.select("purchase_history", filters=filters or None)
 
-    def create_purchase_order(
-        self,
-        supplier_id: str,
-        total_amount_sen: int,
-        approved_by: str,
-        status: str = "APPROVED",
-    ) -> dict[str, Any]:
-        """Insert a new purchase order and return the created record."""
-        return self.insert(
-            "purchase_orders",
-            {
-                "new_po_id": str(uuid4()),
-                "supplier_id": supplier_id,
-                "total_amount_sen": total_amount_sen,
-                "status": status,
-                "approved_by": approved_by,
-            },
-        )
-
     def create_evaluation(self, session_id: str, user_id: str) -> dict[str, Any]:
         """Insert a new evaluation session row."""
         return self.insert(
@@ -136,12 +105,22 @@ class SupabaseRepository:
 
     def update_evaluation(self, session_id: str, **fields: Any) -> list[dict[str, Any]]:
         """Update evaluation fields. Pass keyword args for each column to update."""
-        from datetime import datetime, timezone
         return self.update(
             "evaluations",
             filters={"session_id": session_id},
             data={**fields, "updated_at": datetime.now(timezone.utc).isoformat()},
         )
+
+    def claim_status(self, session_id: str, expected: str, new_status: str) -> bool:
+        """Atomic compare-and-set on evaluations.status — the UPDATE only matches while status
+        is still *expected*, so of two racing requests exactly one gets rows back. False means
+        the other request won; the caller should refuse to act."""
+        rows = self.update(
+            "evaluations",
+            filters={"session_id": session_id, "status": expected},
+            data={"status": new_status, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+        return bool(rows)
 
     def write_audit_log(
         self,
@@ -189,6 +168,3 @@ class SupabaseRepository:
                 "pdf_url": pdf_url,
             },
         )
-
-# Module-level convenience instance
-db = SupabaseRepository()
