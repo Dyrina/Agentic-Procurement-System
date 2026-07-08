@@ -85,6 +85,11 @@ class SupabaseRepository:
         """Return every supplier row."""
         return self.select("suppliers")
 
+    def get_suppliers_by_category(self, category: str) -> list[dict[str, Any]]:
+        """Fetch only suppliers that support the requested item's category."""
+        response = self._client.table("suppliers").select("*").contains("supported_categories", [category]).execute()
+        return response.data
+
     def get_item(self, item_id: str) -> dict[str, Any] | None:
         """Fetch a single inventory item by ID."""
         rows = self.select("items", filters={"item_id": item_id})

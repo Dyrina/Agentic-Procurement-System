@@ -33,6 +33,7 @@ class ProcurementState(TypedDict, total=False):
     # check_stock outputs
     item_name: str
     item_id: str
+    item_category: str
     requested_qty: int
     stock_sufficient: bool
     current_stock: int

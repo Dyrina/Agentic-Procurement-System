@@ -69,6 +69,7 @@ async def _check_stock(item_id: str, requested_qty: int) -> dict:
     return {
         "current_stock": item["current_stock"],
         "stock_sufficient": item["current_stock"] >= requested_qty,
+        "item_category": item["category"],
     }
 
 
@@ -83,6 +84,7 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
                 **state,
                 "current_stock": result["current_stock"],
                 "stock_sufficient": result["stock_sufficient"],
+                "item_category": result["item_category"],
                 "inventory_candidates": None,
                 "supervisor_history": [
                     *history,
@@ -105,6 +107,7 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
             return {
                 **state,
                 "item_id": "UNCATALOGED",
+                "item_category": "Uncataloged",
                 "inventory_candidates": None,
                 "supervisor_history": [
                     *history,

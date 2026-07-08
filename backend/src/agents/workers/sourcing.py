@@ -53,14 +53,14 @@ def _draft_rfq_email(item_name: str, requested_qty: int, api_key: str) -> str:
     return _extract_text(response.content)
 
 
-async def send_rfqs(item_name: str, requested_qty: int) -> dict:
-    """Draft an RFQ with Gemini and send it to every supplier in the database."""
+async def send_rfqs(item_name: str, item_category: str, requested_qty: int) -> dict:
+    """Draft an RFQ with Gemini and send it to relevant suppliers based on category."""
     settings = get_settings()
     db = SupabaseRepository()
 
-    suppliers = db.get_all_suppliers()
+    suppliers = db.get_suppliers_by_category(item_category)
     if not suppliers:
-        raise ValueError("No suppliers registered in database")
+        raise ValueError(f"No suppliers found for category: {item_category}")
 
     email_body = _draft_rfq_email(item_name, requested_qty, settings.GOOGLE_API_KEY)
     subject = f"Request for Quotation — {item_name} (Qty: {requested_qty})"
@@ -178,7 +178,8 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
     history = state.get("supervisor_history", [])
     try:
         if not state.get("rfq_sent_at"):
-            result = await send_rfqs(state["item_name"], state["requested_qty"])
+            item_category = state.get("item_category", "General")
+            result = await send_rfqs(state["item_name"], item_category, state["requested_qty"])
             return {
                 **state,
                 **result,

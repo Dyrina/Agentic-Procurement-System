@@ -134,3 +134,24 @@ ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS awaiting_input_json JSONB;
 
 -- LangGraph's own checkpoint tables (checkpoints, checkpoint_blobs, checkpoint_writes)
 -- are created by AsyncPostgresSaver.setup() at app startup, not by this file.
+
+-- ============================================================
+-- Schema v4 migrations — Supplier Category Filtering
+-- ============================================================
+
+-- 1. Add the column (using a text array so a supplier can have multiple categories)
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS supported_categories text[];
+
+-- 2. Update the suppliers with their respective categories
+UPDATE suppliers SET supported_categories = ARRAY['IT Equipment', 'General'] WHERE supplier_id = 'SUP-A';   -- Alpha Tech Solutions
+UPDATE suppliers SET supported_categories = ARRAY['Raw Materials'] WHERE supplier_id = 'SUP-AMA';         -- AM Alloy Industries
+UPDATE suppliers SET supported_categories = ARRAY['Machinery'] WHERE supplier_id = 'SUP-APX';             -- Apex Air Compressor
+UPDATE suppliers SET supported_categories = ARRAY['Furniture', 'General'] WHERE supplier_id = 'SUP-AST';  -- Asiastar Furniture
+UPDATE suppliers SET supported_categories = ARRAY['IT Equipment'] WHERE supplier_id = 'SUP-B';            -- Global IT Supplies
+UPDATE suppliers SET supported_categories = ARRAY['IT Equipment'] WHERE supplier_id = 'SUP-C';            -- BudgetHW Direct
+UPDATE suppliers SET supported_categories = ARRAY['Machinery', 'General'] WHERE supplier_id = 'SUP-FHM';  -- FHM Equipment
+UPDATE suppliers SET supported_categories = ARRAY['Machinery', 'Raw Materials'] WHERE supplier_id = 'SUP-IKL'; -- IKLIM Hardware
+UPDATE suppliers SET supported_categories = ARRAY['Furniture', 'General'] WHERE supplier_id = 'SUP-OGS';  -- Office Gap Supply
+UPDATE suppliers SET supported_categories = ARRAY['Furniture'] WHERE supplier_id = 'SUP-SEB';             -- Space Elements Berhad
+UPDATE suppliers SET supported_categories = ARRAY['Machinery', 'Raw Materials'] WHERE supplier_id = 'SUP-TCM'; -- TCM (KL)
+UPDATE suppliers SET supported_categories = ARRAY['Furniture', 'General'] WHERE supplier_id = 'SUP-WYS';  -- Wysen
