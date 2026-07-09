@@ -9,6 +9,7 @@ Handles the post-approval automation:
 
 from __future__ import annotations
 
+import asyncio
 import io
 from datetime import datetime, timezone
 
@@ -68,6 +69,12 @@ async def run_automation(state: dict) -> dict:
     Returns updated state with po_pdf_url.
     Not registered as MCP tool — triggered only by approve endpoint.
     """
+    # Body is pure sync I/O (Supabase, ReportLab, Storage upload) — run it off the event loop
+    # so a slow upload can't freeze every other session's SSE stream.
+    return await asyncio.to_thread(_run_automation_sync, state)
+
+
+def _run_automation_sync(state: dict) -> dict:
     settings = get_settings()
     db = SupabaseRepository()
     supabase_client = db._client

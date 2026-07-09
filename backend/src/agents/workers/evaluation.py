@@ -9,6 +9,8 @@ reasoning is written to audit_logs, not just the final scores.
 
 from __future__ import annotations
 
+import logging
+
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
@@ -81,6 +83,9 @@ _SYSTEM_PROMPT = (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _history_entry(summary: str) -> dict[str, str]:
     return {"worker": "evaluation", "summary": summary}
 
@@ -89,7 +94,7 @@ async def evaluation_node(state: ProcurementState) -> ProcurementState:
     """Run the Evaluation ReAct agent once; it must finish by calling write_audit_log."""
     history = state.get("supervisor_history", [])
     try:
-        agent = create_react_agent(_build_llm(), _TOOLS, prompt=_SYSTEM_PROMPT)
+        agent = create_react_agent(_build_llm("smart"), _TOOLS, prompt=_SYSTEM_PROMPT)
         prompt = (
             f"item_id: {state.get('item_id')}\nextracted_quotes: {state.get('extracted_quotes')}\n"
         )
@@ -104,6 +109,7 @@ async def evaluation_node(state: ProcurementState) -> ProcurementState:
             "supervisor_history": [*history, _history_entry(args["overall_reasoning"][:120])],
         }
     except Exception as exc:
+        logger.exception("evaluation worker failed")
         return {
             **state,
             "error": str(exc),

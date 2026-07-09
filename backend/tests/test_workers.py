@@ -212,9 +212,57 @@ async def test_inventory_node_always_asks_for_confirmation(fake_llm):
     ):
         result = await inventory_node(state)
 
+    from src.agents.workers.inventory import _NOT_LISTED_OPTION
+
     assert result["needs_clarification"] is True
-    assert result["clarification_payload"]["candidates"] == candidates
+    # The "none of these — new item" escape hatch is always appended after real candidates.
+    assert result["clarification_payload"]["candidates"] == [*candidates, _NOT_LISTED_OPTION]
     assert "item_id" not in result  # never silently picked
+    # Question wording is deterministic and intent-aware — never the LLM's ("purchase?" on a
+    # stock check was a live bug). No intent in this state → default (purchase-path) wording.
+    assert result["clarification_payload"]["question"] != "Did you mean Dell XPS 15 Laptop?"
+    assert "check stock" not in result["clarification_payload"]["question"]
+
+
+@pytest.mark.asyncio
+async def test_inventory_confirm_question_matches_check_stock_intent(fake_llm):
+    from src.agents.workers.inventory import inventory_node
+
+    candidates = [{"item_id": "IT-XPS-15", "name": "Dell XPS 15 Laptop", "similarity": 0.8}]
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "ask_user_to_confirm",
+                        "args": {
+                            "candidates": candidates,
+                            "question": "Is this the one you would like to purchase?",
+                        },
+                        "id": "1",
+                    }
+                ],
+            ),
+        ]
+    )
+    mock_db = MagicMock()
+    mock_db.rpc.return_value = candidates
+    state: ProcurementState = {
+        "session_id": "s1",
+        "item_name": "Dell XPS 15",
+        "requested_qty": 0,
+        "intent": "check_stock",
+    }
+    with (
+        patch("src.agents.workers.inventory._build_llm", return_value=llm),
+        patch("src.agents.workers.inventory.SupabaseRepository", return_value=mock_db),
+    ):
+        result = await inventory_node(state)
+
+    question = result["clarification_payload"]["question"]
+    assert "check stock" in question
+    assert "purchase" not in question  # the LLM's purchase wording must not leak through
 
 
 @pytest.mark.asyncio
@@ -241,6 +289,193 @@ async def test_inventory_node_checks_stock_once_item_id_confirmed():
 
     assert result["current_stock"] == 4
     assert result["stock_sufficient"] is False
+
+
+@pytest.mark.asyncio
+async def test_intake_node_rejects_out_of_scope_request(fake_llm):
+    from src.agents.workers.intake import intake_node
+
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "reject_out_of_scope",
+                        "args": {"reason": "I can only help with procurement requests."},
+                        "id": "1",
+                    }
+                ],
+            ),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "user_message": "write me a poem"}
+    with patch("src.agents.workers.intake._build_llm", return_value=llm):
+        result = await intake_node(state)
+
+    assert result["completion_message"] == "I can only help with procurement requests."
+    assert result["needs_clarification"] is False
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_intake_node_extracts_intent(fake_llm):
+    from src.agents.workers.intake import intake_node
+
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_intake",
+                        "args": {"item_name": "Laptop", "requested_qty": 2, "intent": "check_stock"},
+                        "id": "1",
+                    }
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "user_message": "how many laptops do we have?"}
+    with patch("src.agents.workers.intake._build_llm", return_value=llm):
+        result = await intake_node(state)
+
+    assert result["intent"] == "check_stock"
+
+
+@pytest.mark.asyncio
+async def test_intake_node_unknown_intent_degrades_to_buy(fake_llm):
+    from src.agents.workers.intake import intake_node
+
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_intake",
+                        "args": {"item_name": "Laptop", "requested_qty": 2, "intent": "banana"},
+                        "id": "1",
+                    }
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "user_message": "2 laptops"}
+    with patch("src.agents.workers.intake._build_llm", return_value=llm):
+        result = await intake_node(state)
+
+    assert result["intent"] == "buy"
+
+
+@pytest.mark.asyncio
+async def test_intake_node_purchase_intent_with_zero_qty_asks_instead_of_proceeding(fake_llm):
+    """Backstop: a buy with no real quantity must clarify — an invented qty becomes an RFQ/PO."""
+    from src.agents.workers.intake import intake_node
+
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_intake",
+                        "args": {"item_name": "Laptop", "requested_qty": 0, "intent": "buy"},
+                        "id": "1",
+                    }
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "user_message": "buy laptops"}
+    with patch("src.agents.workers.intake._build_llm", return_value=llm):
+        result = await intake_node(state)
+
+    assert result["needs_clarification"] is True
+    assert "how many" in result["clarification_payload"]["question"].lower()
+    assert "item_name" not in result
+
+
+@pytest.mark.asyncio
+async def test_intake_node_check_stock_with_zero_qty_proceeds(fake_llm):
+    """qty 0 is the normal shape of 'how many X do we have?' — must pass straight through."""
+    from src.agents.workers.intake import intake_node
+
+    llm = fake_llm(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_intake",
+                        "args": {"item_name": "Laptop", "requested_qty": 0, "intent": "check_stock"},
+                        "id": "1",
+                    }
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    state: ProcurementState = {"session_id": "s1", "user_message": "how many laptops in stock?"}
+    with patch("src.agents.workers.intake._build_llm", return_value=llm):
+        result = await intake_node(state)
+
+    assert result["requested_qty"] == 0
+    assert result["intent"] == "check_stock"
+    assert result["needs_clarification"] is False
+
+
+@pytest.mark.asyncio
+async def test_intake_await_node_cancel_sets_cancelled():
+    from src.agents.workers.intake import intake_await_node
+
+    state: ProcurementState = {
+        "session_id": "s1",
+        "user_message": "laptops",
+        "needs_clarification": True,
+        "clarification_payload": {"type": "intake_clarification", "question": "how many?"},
+    }
+    with patch("src.agents.workers.intake.interrupt", return_value={"action": "cancel"}):
+        result = await intake_await_node(state)
+
+    assert result["cancelled"] is True
+    assert result["needs_clarification"] is False
+
+
+@pytest.mark.asyncio
+async def test_inventory_await_node_cancel_sets_cancelled():
+    from src.agents.workers.inventory import inventory_await_node
+
+    state: ProcurementState = {
+        "session_id": "s1",
+        "needs_clarification": True,
+        "clarification_payload": {"type": "inventory_candidate_confirm", "candidates": [], "question": "?"},
+    }
+    with patch("src.agents.workers.inventory.interrupt", return_value={"action": "cancel"}):
+        result = await inventory_await_node(state)
+
+    assert result["cancelled"] is True
+    assert "item_id" not in result
+
+
+@pytest.mark.asyncio
+async def test_sourcing_await_node_cancel_sets_cancelled():
+    from src.agents.workers.sourcing import sourcing_await_node
+
+    state: ProcurementState = {
+        "session_id": "s1",
+        "needs_clarification": True,
+        "clarification_payload": {"type": "sourcing_timeout", "options": []},
+        "supplier_emails": ["a@b.com"],
+        "rfq_sent_at": "2026-07-07T00:00:00Z",
+    }
+    with patch("src.agents.workers.sourcing.interrupt", return_value={"action": "cancel"}):
+        result = await sourcing_await_node(state)
+
+    assert result["cancelled"] is True
 
 
 @pytest.mark.asyncio
@@ -294,14 +529,14 @@ async def test_extract_quotes_resolves_supplier_by_email_not_name():
         patch("src.agents.workers.sourcing.SupabaseRepository", return_value=mock_db),
         patch(
             "src.agents.workers.sourcing._parse_quotes_with_gemini",
-            return_value=[
+            new=AsyncMock(return_value=[
                 {
                     "supplier_name": "Some Totally Different Name Inc",
                     "unit_price_sen": 395000,
                     "quoted_delivery_days": 2,
                     "payment_terms": "Net-60",
                 },
-            ],
+            ]),
         ),
     ):
         result = await extract_quotes(["sales@globalit.com"], "2026-07-01T00:00:00Z")
@@ -336,14 +571,14 @@ async def test_extract_quotes_unknown_sender_tagged_unknown():
         patch("src.agents.workers.sourcing.SupabaseRepository", return_value=mock_db),
         patch(
             "src.agents.workers.sourcing._parse_quotes_with_gemini",
-            return_value=[
+            new=AsyncMock(return_value=[
                 {
                     "supplier_name": "Whoever",
                     "unit_price_sen": 100000,
                     "quoted_delivery_days": 5,
                     "payment_terms": "Net-30",
                 },
-            ],
+            ]),
         ),
     ):
         result = await extract_quotes(["sales@globalit.com"], "2026-07-01T00:00:00Z")
@@ -565,11 +800,21 @@ def test_get_reference_score_tool_wraps_score_suppliers():
 def test_write_audit_log_tool_records_decision():
     from src.agents.workers.evaluation import write_audit_log
 
+    def _supplier(supplier_id: str, is_recommended: bool) -> dict:
+        return {
+            "supplier_id": supplier_id,
+            "supplier_name": f"Supplier {supplier_id}",
+            "unit_price_sen": 100000,
+            "quoted_delivery_days": 7,
+            "payment_terms": "Net-30",
+            "total_score": 80.0,
+            "risk_flags": [],
+            "is_recommended": is_recommended,
+            "reasoning": "test",
+        }
+
     mock_db = MagicMock()
-    evaluated = [
-        {"supplier_id": "SUP-A", "is_recommended": False},
-        {"supplier_id": "SUP-B", "is_recommended": True},
-    ]
+    evaluated = [_supplier("SUP-A", False), _supplier("SUP-B", True)]
     with patch("src.agents.workers.evaluation.SupabaseRepository", return_value=mock_db):
         write_audit_log.invoke(
             {"evaluated_suppliers": evaluated, "overall_reasoning": "SUP-B is cheaper and faster."}

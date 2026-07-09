@@ -14,16 +14,16 @@ suppliers.name (which silently tagged mismatches "UNKNOWN").
 from __future__ import annotations
 
 import asyncio
+import logging
 import io
 from datetime import datetime, timezone
 from typing import Any
 
 import pypdf
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
-from src.agents.workers import _extract_text
+from src.agents.workers import _build_llm, _cancel_requested, _extract_text
 from src.core.config import get_settings
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
@@ -33,13 +33,15 @@ _POLL_INTERVAL = 15  # seconds
 _DEFAULT_TIMEOUT = 300  # 5 minutes
 
 
+logger = logging.getLogger(__name__)
+
+
 def _history_entry(summary: str) -> dict[str, str]:
     return {"worker": "sourcing", "summary": summary}
 
 
-def _draft_rfq_email(item_name: str, requested_qty: int, api_key: str) -> str:
+async def _draft_rfq_email(item_name: str, requested_qty: int) -> str:
     """Use Gemini to draft an RFQ email body in HTML."""
-    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=api_key)
     prompt = (
         f"Draft a professional Request for Quotation (RFQ) email body in HTML.\n"
         f"Item: {item_name}\nQuantity: {requested_qty} units\n\n"
@@ -49,7 +51,7 @@ def _draft_rfq_email(item_name: str, requested_qty: int, api_key: str) -> str:
         f"Reply deadline: within 24 hours. Be concise and professional.\n"
         f"Return only the HTML email body, no subject line, no preamble."
     )
-    response = llm.invoke(prompt)
+    response = await _build_llm().ainvoke(prompt)
     return _extract_text(response.content)
 
 
@@ -58,17 +60,25 @@ async def send_rfqs(item_name: str, item_category: str, requested_qty: int) -> d
     settings = get_settings()
     db = SupabaseRepository()
 
-    suppliers = db.get_suppliers_by_category(item_category)
+    suppliers = await asyncio.to_thread(db.get_suppliers_by_category, item_category)
     if not suppliers:
         raise ValueError(f"No suppliers found for category: {item_category}")
 
-    email_body = _draft_rfq_email(item_name, requested_qty, settings.GOOGLE_API_KEY)
+    email_body = await _draft_rfq_email(item_name, requested_qty)
     subject = f"Request for Quotation — {item_name} (Qty: {requested_qty})"
 
-    service = get_gmail_service(settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH)
+    service = await asyncio.to_thread(
+        get_gmail_service, settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH
+    )
     sent_to: list[str] = []
     for supplier in suppliers:
-        send_email(service, to=supplier["contact_email"], subject=subject, body_html=email_body)
+        await asyncio.to_thread(
+            send_email,
+            service,
+            to=supplier["contact_email"],
+            subject=subject,
+            body_html=email_body,
+        )
         sent_to.append(supplier["contact_email"])
 
     return {"rfq_sent_at": datetime.now(timezone.utc).isoformat(), "supplier_emails": sent_to}
@@ -79,11 +89,15 @@ async def wait_for_quotes(
 ) -> dict:
     """Poll Gmail until every supplier has replied or timeout_seconds elapses."""
     settings = get_settings()
-    service = get_gmail_service(settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH)
+    service = await asyncio.to_thread(
+        get_gmail_service, settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH
+    )
 
     deadline = asyncio.get_event_loop().time() + timeout_seconds
     while True:
-        replies = fetch_replies(service, from_emails=supplier_emails, since_timestamp=rfq_sent_at)
+        replies = await asyncio.to_thread(
+            fetch_replies, service, from_emails=supplier_emails, since_timestamp=rfq_sent_at
+        )
         replied_from = {r["from"].split("<")[-1].strip(">").strip().lower() for r in replies}
         pending = [e for e in supplier_emails if e.lower() not in replied_from]
         if not pending:
@@ -96,11 +110,13 @@ async def wait_for_quotes(
 async def send_reminder_email(pending_emails: list[str]) -> dict:
     """Send a short follow-up to suppliers who haven't replied yet."""
     settings = get_settings()
-    service = get_gmail_service(settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH)
+    service = await asyncio.to_thread(
+        get_gmail_service, settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH
+    )
     body_html = "<p>Following up on our RFQ — could you send your quote when you have a chance?</p>"
     for email in pending_emails:
-        send_email(
-            service, to=email, subject="Reminder: Request for Quotation", body_html=body_html
+        await asyncio.to_thread(
+            send_email, service, to=email, subject="Reminder: Request for Quotation", body_html=body_html
         )
     return {"reminded_emails": list(pending_emails)}
 
@@ -121,9 +137,9 @@ def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
-def _parse_quotes_with_gemini(text: str, api_key: str) -> list[dict[str, Any]]:
-    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=api_key)
-    structured = llm.with_structured_output(_QuotesOutput)
+async def _parse_quotes_with_gemini(text: str) -> list[dict[str, Any]]:
+    # Money path — a misread sen amount here becomes a wrong PO, so this gets the smart tier.
+    structured = _build_llm("smart").with_structured_output(_QuotesOutput)
     prompt = (
         "Extract procurement quote data from this supplier communication.\n\n"
         f"Text:\n{text}\n\n"
@@ -133,20 +149,25 @@ def _parse_quotes_with_gemini(text: str, api_key: str) -> list[dict[str, Any]]:
         "- quoted_delivery_days: delivery time as integer number of days\n"
         "- payment_terms: e.g. 'Net-30', 'Net-60', 'Net-45', 'Net-15', 'Immediate'"
     )
-    result = structured.invoke(prompt)
+    result = await structured.ainvoke(prompt)
     return [q.model_dump() for q in result.quotes]
 
 
 async def extract_quotes(supplier_emails: list[str], rfq_sent_at: str) -> dict:
     """Parse supplier replies into structured quotes, resolving supplier_id by sender email."""
     settings = get_settings()
-    service = get_gmail_service(settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH)
-    replies = fetch_replies(service, from_emails=supplier_emails, since_timestamp=rfq_sent_at)
+    service = await asyncio.to_thread(
+        get_gmail_service, settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_TOKEN_PATH
+    )
+    replies = await asyncio.to_thread(
+        fetch_replies, service, from_emails=supplier_emails, since_timestamp=rfq_sent_at
+    )
     if not replies:
         raise ValueError("No supplier replies found in Gmail")
 
     db = SupabaseRepository()
-    suppliers_by_email = {s["contact_email"].lower(): s for s in db.get_all_suppliers()}
+    suppliers = await asyncio.to_thread(db.get_all_suppliers)
+    suppliers_by_email = {s["contact_email"].lower(): s for s in suppliers}
 
     all_quotes: list[dict[str, Any]] = []
     for reply in replies:
@@ -158,14 +179,14 @@ async def extract_quotes(supplier_emails: list[str], rfq_sent_at: str) -> dict:
         supplier_name = supplier["name"] if supplier else "Unknown"
 
         text = (
-            _extract_text_from_pdf(reply["attachments"][0]["data"])
+            await asyncio.to_thread(_extract_text_from_pdf, reply["attachments"][0]["data"])
             if reply["attachments"]
             else reply["body_text"]
         )
         if not text.strip():
             continue
 
-        for q in _parse_quotes_with_gemini(text, settings.GOOGLE_API_KEY):
+        for q in await _parse_quotes_with_gemini(text):
             q["supplier_id"] = supplier_id
             q["supplier_name"] = supplier_name
             all_quotes.append(q)
@@ -227,6 +248,7 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
             "supervisor_history": [*history, _history_entry("quotes already extracted")],
         }
     except Exception as exc:
+        logger.exception("sourcing worker failed")
         return {
             **state,
             "error": str(exc),
@@ -240,6 +262,8 @@ async def sourcing_await_node(state: ProcurementState) -> ProcurementState:
         return state
     answer = interrupt(state["clarification_payload"])
     base = {**state, "needs_clarification": False, "clarification_payload": None}
+    if _cancel_requested(answer):
+        return {**base, "cancelled": True}
 
     action = answer.get("action")
     if action == "proceed_partial":

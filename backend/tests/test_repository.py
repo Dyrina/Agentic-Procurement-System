@@ -47,3 +47,23 @@ def test_rpc_calls_postgres_function_and_returns_rows():
     mock_client.rpc.assert_called_with(
         "search_items_by_name", {"query": "dell xps", "match_limit": 5}
     )
+
+
+def _make_cas_repo(rows):
+    mock_client = MagicMock()
+    (
+        mock_client.table.return_value.update.return_value.eq.return_value.eq.return_value
+        .execute.return_value
+    ).data = rows
+    return SupabaseRepository(client=mock_client)
+
+
+def test_claim_status_true_when_transition_applied():
+    repo = _make_cas_repo([{"session_id": "s1", "status": "APPROVING"}])
+    assert repo.claim_status("s1", "AWAITING_APPROVAL", "APPROVING") is True
+
+
+def test_claim_status_false_when_race_lost():
+    # UPDATE matched zero rows — another request already moved the status.
+    repo = _make_cas_repo([])
+    assert repo.claim_status("s1", "AWAITING_APPROVAL", "APPROVING") is False

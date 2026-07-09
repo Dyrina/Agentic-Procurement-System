@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,7 +28,19 @@ from src.database.client import SupabaseRepository
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
+logger = logging.getLogger(__name__)
+
 db = SupabaseRepository()
+
+# asyncio only keeps a weak reference to tasks — without this set a running graph task can be
+# garbage-collected mid-flight.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 # ── Request / Response models ───────────────────────────────────────────────
@@ -80,9 +93,9 @@ async def create_chat(body: ChatRequest) -> ChatCreated:
 
     # Create SSE queue and evaluation row before starting background task
     create_session(session_id)
-    db.create_evaluation(session_id, body.user_id)
+    await asyncio.to_thread(db.create_evaluation, session_id, body.user_id)
 
-    asyncio.create_task(_drive_graph(session_id, initial_state))
+    _spawn(_drive_graph(session_id, initial_state))
     return ChatCreated(session_id=session_id)
 
 
@@ -92,7 +105,7 @@ async def reply_chat(session_id: str, body: ReplyRequest) -> dict[str, str]:
     Answer a paused session's clarification/confirmation/escalation. The SSE stream opened by
     /chat stays connected across the pause — this just resumes the same graph run.
     """
-    record = db.get_evaluation(session_id)
+    record = await asyncio.to_thread(db.get_evaluation, session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Session not found")
     if record["status"] != "AWAITING_INPUT":
@@ -101,7 +114,12 @@ async def reply_chat(session_id: str, body: ReplyRequest) -> dict[str, str]:
             detail=f"Session status is '{record['status']}', expected 'AWAITING_INPUT'",
         )
 
-    asyncio.create_task(_drive_graph(session_id, Command(resume=body.reply)))
+    # Atomic status claim so a double-submitted reply can't resume the same graph twice.
+    claimed = await asyncio.to_thread(db.claim_status, session_id, "AWAITING_INPUT", "PLANNING")
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Session was already resumed")
+
+    _spawn(_drive_graph(session_id, Command(resume=body.reply)))
     return {"status": "RESUMED"}
 
 
@@ -111,7 +129,7 @@ async def stream_chat(session_id: str):
     q = get_queue(session_id)
     if q is None:
         # Session may have already completed — check DB
-        record = db.get_evaluation(session_id)
+        record = await asyncio.to_thread(db.get_evaluation, session_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -121,12 +139,22 @@ async def stream_chat(session_id: str):
         async def _replay():
             if record["status"] == "AWAITING_INPUT" and record.get("awaiting_input_json"):
                 yield {"event": "awaiting_input", "data": json.dumps(record["awaiting_input_json"])}
-            elif record.get("report_markdown"):
+                return
+            if record.get("report_markdown"):
                 yield {
                     "event": "report",
                     "data": json.dumps({"markdown": record["report_markdown"]}),
                 }
+            if record["status"] == "AWAITING_APPROVAL":
                 yield {"event": "approve_ready", "data": json.dumps({"session_id": session_id})}
+            elif record["status"] in ("COMPLETED", "CANCELLED"):
+                message = (
+                    "Session cancelled." if record["status"] == "CANCELLED" else "Session completed."
+                )
+                yield {
+                    "event": "completed",
+                    "data": json.dumps({"session_id": session_id, "message": message}),
+                }
 
         return EventSourceResponse(_replay())
 
@@ -143,7 +171,7 @@ async def stream_chat(session_id: str):
 @router.post("/chat/{session_id}/approve", response_model=ApproveResponse)
 async def approve_chat(session_id: str) -> ApproveResponse:
     """Trigger Automation Agent: generate PO, PDF, upload to Supabase Storage."""
-    record = db.get_evaluation(session_id)
+    record = await asyncio.to_thread(db.get_evaluation, session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Session not found")
     if record["status"] != "AWAITING_APPROVAL":
@@ -152,13 +180,21 @@ async def approve_chat(session_id: str) -> ApproveResponse:
             detail=f"Session status is '{record['status']}', expected 'AWAITING_APPROVAL'",
         )
 
+    # Atomic status claim so a double-clicked Approve can't generate two purchase orders.
+    claimed = await asyncio.to_thread(db.claim_status, session_id, "AWAITING_APPROVAL", "APPROVING")
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Approval already in progress")
+
     state = record.get("state_json") or {}
     try:
         updated_state = await run_automation(state)
     except Exception as exc:
+        logger.exception("automation failed for %s", session_id)
+        # Release the claim so the user can retry after a transient failure.
+        await asyncio.to_thread(db.update_evaluation, session_id, status="AWAITING_APPROVAL")
         raise HTTPException(status_code=500, detail=f"Automation failed: {exc}") from exc
 
-    db.update_evaluation(session_id, status="APPROVED")
+    await asyncio.to_thread(db.update_evaluation, session_id, status="APPROVED")
 
     return ApproveResponse(
         status="SUCCESS",
@@ -177,49 +213,64 @@ async def _drive_graph(session_id: str, graph_input: dict | Command) -> None:
     try:
         result = await get_manager_graph().ainvoke(graph_input, config=config)
     except Exception as exc:
+        logger.exception("graph run crashed for %s", session_id)
         await push_event(session_id, "error", {"step": "pipeline", "message": str(exc)})
         await end_stream(session_id)
-        db.update_evaluation(session_id, status="FAILED")
+        await asyncio.to_thread(db.update_evaluation, session_id, status="FAILED")
         return
 
     if interrupts := result.get("__interrupt__"):
         payload = interrupts[0].value
         await push_event(session_id, "awaiting_input", payload)
-        db.update_evaluation(session_id, status="AWAITING_INPUT", awaiting_input_json=payload)
+        await asyncio.to_thread(
+            db.update_evaluation, session_id, status="AWAITING_INPUT", awaiting_input_json=payload
+        )
         return
 
-    if result.get("status") == "FAILED":
+    # finalize_node/error_node own the terminal status semantics; this just relays them.
+    final_status = result.get("status", "COMPLETED")
+
+    if final_status == "FAILED":
+        logger.error("graph run failed for %s: %s", session_id, result.get("error"))
         await push_event(
             session_id,
             "error",
             {"step": "pipeline", "message": result.get("error", "Unknown error")},
         )
         await end_stream(session_id)
-        db.update_evaluation(session_id, status="FAILED")
+        await asyncio.to_thread(db.update_evaluation, session_id, status="FAILED")
         return
 
-    await push_event(session_id, "report", {"markdown": result.get("report_markdown", "")})
+    if result.get("report_markdown"):
+        await push_event(session_id, "report", {"markdown": result["report_markdown"]})
 
-    # Inventory can report stock as already sufficient, in which case the supervisor correctly
-    # skips Sourcing/Evaluation entirely — there's no recommended supplier and nothing for
-    # /approve to act on. Only offer approval when there's actually a PO to generate.
-    if result.get("evaluated_suppliers"):
+    if final_status == "AWAITING_APPROVAL":
+        # Evaluation recommended a supplier — there's actually a PO to generate.
         await push_event(
             session_id,
             "approve_ready",
             {"session_id": session_id, "message": "Approve to generate purchase order"},
         )
-        final_status = "AWAITING_APPROVAL"
-    else:
+    elif final_status == "CANCELLED":
         await push_event(
             session_id,
             "completed",
-            {"session_id": session_id, "message": "No purchase order needed — stock is sufficient."},
+            {"session_id": session_id, "message": "Session cancelled."},
         )
-        final_status = "COMPLETED"
+    else:
+        # COMPLETED: check_stock query, satisfied ensure_stock, or out-of-scope rejection.
+        message = result.get("completion_message") or (
+            "Stock check complete."
+            if result.get("intent") == "check_stock"
+            else "No purchase order needed — stock is sufficient."
+        )
+        await push_event(
+            session_id, "completed", {"session_id": session_id, "message": message}
+        )
 
     await end_stream(session_id)
-    db.update_evaluation(
+    await asyncio.to_thread(
+        db.update_evaluation,
         session_id,
         status=final_status,
         report_markdown=result.get("report_markdown", ""),

@@ -8,12 +8,15 @@ single clear match, because there is no tool that lets it finish without asking 
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langgraph.types import interrupt
 
-from src.agents.workers import _build_llm, _last_tool_call
+from src.agents.workers import _build_llm, _cancel_requested, _last_tool_call
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
 
@@ -48,12 +51,22 @@ _NOT_LISTED_OPTION = {
 }
 
 _SYSTEM_PROMPT = (
-    "You are the Inventory specialist for a procurement system. The user wants to buy an "
-    "item described as {item_name!r}. Call search_items with a good search query to find "
+    "You are the Inventory specialist for a procurement system. The user's request involves "
+    "an item described as {item_name!r}. Call search_items with a good search query to find "
     "candidate items in the catalog, then ALWAYS call ask_user_to_confirm with the candidates "
     "and a short question — even if there is only one clear match, you must never pick an item "
     "without asking the user first. This is a hard requirement, not a suggestion."
 )
+
+# The confirmation question shown to the human is deterministic, not the LLM's — the wording
+# must match the intent ("would you like to purchase?" on a stock check is wrong), and that is
+# too important to leave to model mood. The agent still authors a question via
+# ask_user_to_confirm; it just isn't the one displayed.
+_CONFIRM_QUESTION_CHECK = "I found these in the catalog — which one should I check stock for?"
+_CONFIRM_QUESTION_DEFAULT = "I found these in the catalog — which one is the item you need?"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _history_entry(summary: str) -> dict[str, str]:
@@ -63,7 +76,7 @@ def _history_entry(summary: str) -> dict[str, str]:
 async def _check_stock(item_id: str, requested_qty: int) -> dict:
     """Deterministic stock lookup for an already-resolved item_id — no LLM needed here."""
     db = SupabaseRepository()
-    item = db.get_item(item_id)
+    item = await asyncio.to_thread(db.get_item, item_id)
     if item is None:
         raise ValueError(f"Item '{item_id}' not found")
     return {
@@ -102,11 +115,16 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
         # sentinel item_id rather than interrupting to ask, and rather than auto-creating a
         # real catalog row (that's someone else's system's job, not this agent's).
         db = SupabaseRepository()
-        candidates = db.rpc("search_items_by_name", {"query": state["item_name"], "match_limit": 5})
+        candidates = await asyncio.to_thread(
+            db.rpc, "search_items_by_name", {"query": state["item_name"], "match_limit": 5}
+        )
         if not candidates:
             return {
                 **state,
                 "item_id": "UNCATALOGED",
+                # Not in the catalog = zero on hand, by definition — no DB lookup needed.
+                "current_stock": 0,
+                "stock_sufficient": False,
                 "item_category": "Uncataloged",
                 "inventory_candidates": None,
                 "supervisor_history": [
@@ -129,17 +147,23 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
             )
 
         candidates = [*args["candidates"], _NOT_LISTED_OPTION]
+        question = (
+            _CONFIRM_QUESTION_CHECK
+            if state.get("intent") == "check_stock"
+            else _CONFIRM_QUESTION_DEFAULT
+        )
         return {
             **state,
             "needs_clarification": True,
             "inventory_candidates": candidates,
             "clarification_payload": {
                 "type": "inventory_candidate_confirm",
-                "question": args["question"],
+                "question": question,
                 "candidates": candidates,
             },
         }
     except Exception as exc:
+        logger.exception("inventory worker failed")
         return {
             **state,
             "error": str(exc),
@@ -152,10 +176,12 @@ async def inventory_await_node(state: ProcurementState) -> ProcurementState:
     if not state.get("needs_clarification"):
         return state
     answer = interrupt(state["clarification_payload"])
-    return {
+    base = {
         **state,
-        "item_id": answer["selected_item_id"],
         "needs_clarification": False,
         "clarification_payload": None,
         "inventory_candidates": None,
     }
+    if _cancel_requested(answer):
+        return {**base, "cancelled": True}
+    return {**base, "item_id": answer["selected_item_id"]}

@@ -9,7 +9,6 @@ helper functions make it easy to emit typed events from any agent node.
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 _queues: dict[str, asyncio.Queue] = {}
@@ -36,7 +35,3 @@ async def end_stream(session_id: str) -> None:
     if q:
         await q.put(None)  # sentinel
     _queues.pop(session_id, None)
-
-
-def format_sse(event: dict[str, Any]) -> str:
-    return f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"

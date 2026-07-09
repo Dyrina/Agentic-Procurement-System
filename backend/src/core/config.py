@@ -26,6 +26,10 @@ class Settings:
     SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
     SUPABASE_DB_URL: str = os.environ.get("SUPABASE_DB_URL", "")
     GOOGLE_API_KEY: str = os.environ.get("GOOGLE_API_KEY", "")
+    # Two model tiers, not per-agent config: "fast" for classification/extraction gated by
+    # schemas or human confirmation, "smart" where errors cost money or are user-visible.
+    MODEL_FAST: str = os.environ.get("MODEL_FAST", "gemini-3.1-flash-lite")
+    MODEL_SMART: str = os.environ.get("MODEL_SMART", "gemini-3.5-flash")
     GMAIL_CREDENTIALS_PATH: str = os.environ.get("GMAIL_CREDENTIALS_PATH", "credentials.json")
     GMAIL_TOKEN_PATH: str = os.environ.get("GMAIL_TOKEN_PATH", "token.json")
     GMAIL_SENDER_EMAIL: str = os.environ.get("GMAIL_SENDER_EMAIL", "")

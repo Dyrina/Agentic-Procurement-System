@@ -4,7 +4,7 @@ tests/test_sse.py — Tests for SSE queue management and event emission.
 
 import asyncio
 import pytest
-from src.api.sse import create_session, push_event, end_stream, format_sse
+from src.api.sse import create_session, push_event, end_stream
 
 
 @pytest.mark.asyncio
@@ -17,14 +17,6 @@ async def test_push_and_drain_events():
     from src.api.sse import _queues
     # queue should be removed after end_stream
     assert "sess_test" not in _queues
-
-
-@pytest.mark.asyncio
-async def test_format_sse_output():
-    event = {"type": "plan", "data": {"steps": ["check_stock"]}}
-    result = format_sse(event)
-    assert result.startswith("event: plan\n")
-    assert '"steps"' in result
 
 
 @pytest.mark.asyncio
