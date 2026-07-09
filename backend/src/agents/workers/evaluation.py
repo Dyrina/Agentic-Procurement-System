@@ -17,7 +17,7 @@ from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
 from src.agents.tools.history import query_history
-from src.agents.workers import _build_llm, _last_tool_call
+from src.agents.workers import _build_llm, _format_error, _last_tool_call
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
 from src.services.scoring import score_suppliers
@@ -112,6 +112,6 @@ async def evaluation_node(state: ProcurementState) -> ProcurementState:
         logger.exception("evaluation worker failed")
         return {
             **state,
-            "error": str(exc),
+            "error": _format_error(exc),
             "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
         }

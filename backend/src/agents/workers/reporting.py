@@ -13,7 +13,7 @@ import logging
 from langchain_core.messages import HumanMessage
 
 from src.agents.tools.report import generate_report
-from src.agents.workers import _build_llm, _extract_text
+from src.agents.workers import _build_llm, _extract_text, _format_error
 from src.core.state import ProcurementState
 
 
@@ -78,6 +78,6 @@ async def reporting_node(state: ProcurementState) -> ProcurementState:
         logger.exception("reporting worker failed")
         return {
             **state,
-            "error": str(exc),
+            "error": _format_error(exc),
             "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
         }

@@ -16,7 +16,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langgraph.types import interrupt
 
-from src.agents.workers import _build_llm, _cancel_requested, _last_tool_call
+from src.agents.workers import _build_llm, _cancel_requested, _format_error, _last_tool_call
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
 
@@ -166,7 +166,7 @@ async def inventory_node(state: ProcurementState) -> ProcurementState:
         logger.exception("inventory worker failed")
         return {
             **state,
-            "error": str(exc),
+            "error": _format_error(exc),
             "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
         }
 

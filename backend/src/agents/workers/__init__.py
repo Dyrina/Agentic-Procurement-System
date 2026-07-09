@@ -46,3 +46,14 @@ def _extract_text(content: str | list) -> str:
     if isinstance(content, str):
         return content
     return "".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
+
+
+def _format_error(exc: Exception) -> str:
+    """Format unhandled worker exceptions into clean, user-facing error messages."""
+    msg = str(exc)
+    if "API_KEY_INVALID" in msg or "API key not valid" in msg:
+        return "Configuration Error: The provided AI Model API Key is invalid or missing."
+    if "Resource exhausted" in msg or "Quota exceeded" in msg or "429" in msg:
+        return "Service Error: The AI service's rate limit or quota has been exceeded."
+    # We fallback to a generic message so ugly JSON tracebacks don't leak to the UI
+    return f"An unexpected system error occurred ({exc.__class__.__name__}). Please check the server logs."

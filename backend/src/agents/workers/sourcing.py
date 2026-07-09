@@ -23,7 +23,7 @@ import pypdf
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
-from src.agents.workers import _build_llm, _cancel_requested, _extract_text
+from src.agents.workers import _build_llm, _cancel_requested, _extract_text, _format_error
 from src.core.config import get_settings
 from src.core.state import ProcurementState
 from src.database.client import SupabaseRepository
@@ -251,7 +251,7 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
         logger.exception("sourcing worker failed")
         return {
             **state,
-            "error": str(exc),
+            "error": _format_error(exc),
             "supervisor_history": [*history, _history_entry(f"FAILED: {exc}")],
         }
 
