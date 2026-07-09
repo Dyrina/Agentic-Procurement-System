@@ -214,10 +214,16 @@ export default function App() {
     const latest = events[events.length - 1];
     if (!latest) return;
 
+<<<<<<< Updated upstream
     if (latest.type === "plan") addChat("manager", latest.data.message);
     if (latest.type === "step_start") addChat("manager", latest.data.message);
     if (latest.type === "step_done") addChat("manager", `${latest.data.step}: ${latest.data.message}`);
     if (latest.type === "report") addChat("manager", "Report generated. Review the recommendation below.");
+=======
+    if (latest.type === "report") {
+      addChat("manager", "Report generated. Review the recommendation below.");
+    }
+>>>>>>> Stashed changes
     if (latest.type === "approve_ready") addChat("manager", latest.data.message);
     if (latest.type === "error") addChat("manager", `Error: ${latest.data.message}`);
   }, [events]);
@@ -358,7 +364,7 @@ export default function App() {
             className={activeView === "reports" ? "active" : ""}
             onClick={() => setActiveView("reports")}
           >
-            <FileText size={16} /> Reports
+            <FileText size={16} /> Purchase Orders
             {purchaseOrders.length > 0 && <span className="nav-count">{purchaseOrders.length}</span>}
           </button>
           <button disabled>
@@ -441,11 +447,71 @@ export default function App() {
               <span className={`status-chip status-${status.replace(/\s+/g, "-").toLowerCase()}`}>{status}</span>
             </div>
 
+<<<<<<< Updated upstream
             <div className="chat-window" ref={chatWindowRef}>
               {chatMessages.map((chat, index) => (
                 <div key={index} className={chat.sender === "user" ? "chat-row user" : "chat-row manager"}>
                   <div className="avatar">{chat.sender === "user" ? <User size={16} /> : <Bot size={16} />}</div>
                   <div className="bubble">{chat.text}</div>
+=======
+              <div className="chat-window" ref={chatWindowRef}>
+                {chatMessages.map((chat, index) => (
+                  <div key={index} className={chat.sender === "user" ? "chat-row user" : "chat-row manager"}>
+                    <div className="avatar">{chat.sender === "user" ? <User size={16} /> : <Bot size={16} />}</div>
+                    <div className="bubble">{chat.text}</div>
+                  </div>
+                ))}
+
+                {awaitingInput && (
+                  <div className="chat-row manager">
+                    <div className="avatar"><Bot size={16} /></div>
+                    <ReplyPrompt payload={awaitingInput} onReply={submitReply} disabled={replying} />
+                  </div>
+                )}
+
+                {report && (
+                  <div className="chat-row manager">
+                    <div className="avatar"><Bot size={16} /></div>
+                    <div className="bubble report-bubble">
+                      <ReactMarkdown>{report}</ReactMarkdown>
+                      {canApprove && !approveResult && (
+                        <button className="approve-btn" onClick={approvePO} disabled={loading}>
+                          Approve &amp; generate PO
+                        </button>
+                      )}
+                      {completedMessage && (
+                        <p className="completed-note">
+                          <CheckCircle2 size={14} /> {completedMessage}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {approveResult && (
+                  <div className="chat-row manager">
+                    <div className="avatar"><Bot size={16} /></div>
+                    <div className="bubble success-bubble">
+                      <h5>Purchase order generated</h5>
+                      <p><b>Status:</b> {approveResult.status}</p>
+                      <a href={approveResult.po_pdf_url} target="_blank" rel="noreferrer">Download PO PDF →</a>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <form className="chat-input" onSubmit={startSession}>
+                <div className="message-row">
+                  <input
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Describe the request, e.g. Buy 30 Dell XPS 15 laptops"
+                    disabled={loading}
+                  />
+                  <button disabled={loading} type="submit" aria-label="Send">
+                    <Send size={16} />
+                  </button>
+>>>>>>> Stashed changes
                 </div>
               ))}
 
