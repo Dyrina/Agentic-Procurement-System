@@ -191,6 +191,11 @@ nav button:disabled {
   width: 140px;
 }
 
+.user-box input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .layout {
   flex: 1;
   display: grid;
@@ -258,6 +263,16 @@ nav button:disabled {
 .status-completed {
   background: var(--success-soft);
   color: var(--success);
+}
+
+.status-approved {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-cancelled {
+  background: var(--surface-raised);
+  color: var(--text-muted);
 }
 
 .chat-window {
@@ -392,6 +407,13 @@ nav button:disabled {
   opacity: 0.6;
 }
 
+.reply-option-btn.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 1 !important;
+}
+
 .reply-option-btn-muted {
   background: none;
   border-style: dashed;
@@ -426,6 +448,11 @@ nav button:disabled {
 
 .reply-text-form button:disabled {
   opacity: 0.6;
+}
+
+.reply-text-form button.selected {
+  opacity: 1 !important;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .completed-note {

@@ -18,24 +18,7 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
 const EVENT_TYPES = ["progress", "awaiting_input", "report", "approve_ready", "completed", "error"];
 
-const PO_STORAGE_KEY = "procureai:purchase_orders";
 
-function loadStoredPOs() {
-  try {
-    const raw = localStorage.getItem(PO_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredPOs(pos) {
-  try {
-    localStorage.setItem(PO_STORAGE_KEY, JSON.stringify(pos));
-  } catch {
-    // storage unavailable — PO history just won't persist across reloads
-  }
-}
 
 function useProcurementStream(sessionId) {
   const [events, setEvents] = useState([]);
@@ -46,14 +29,14 @@ function useProcurementStream(sessionId) {
   const [streamError, setStreamError] = useState(null);
 
   useEffect(() => {
-    if (!sessionId) return;
-
     setEvents([]);
     setReport(null);
     setCanApprove(false);
     setCompletedMessage(null);
     setAwaitingInput(null);
     setStreamError(null);
+
+    if (!sessionId) return;
 
     const streamUrl = `${BACKEND_URL}/api/v1/chat/${sessionId}/stream`;
     const es = new EventSource(streamUrl);
@@ -88,11 +71,11 @@ function useProcurementStream(sessionId) {
     return () => es.close();
   }, [sessionId]);
 
-  return { events, report, canApprove, completedMessage, awaitingInput, streamError };
+  return { events, report, canApprove, completedMessage, awaitingInput, setAwaitingInput, streamError, setStreamError };
 }
 
 export default function App() {
-  const [userId, setUserId] = useState("EMP-402");
+  const [userId, setUserId] = useState("Manager");
   const [message, setMessage] = useState("");
   const [sessionId, setSessionId] = useState(null);
   const [currentRequestText, setCurrentRequestText] = useState("");
@@ -106,33 +89,93 @@ export default function App() {
   const [replying, setReplying] = useState(false);
   const [approveResult, setApproveResult] = useState(null);
   const [activeView, setActiveView] = useState("chat");
-  const [purchaseOrders, setPurchaseOrders] = useState(() => loadStoredPOs());
+  const [processedEventsCount, setProcessedEventsCount] = useState(0);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
   const chatWindowRef = useRef(null);
+  const eventLogRef = useRef(null);
 
-  const { events, report, canApprove, completedMessage, awaitingInput, streamError } =
+  const { events, report, canApprove, completedMessage, awaitingInput, setAwaitingInput, streamError, setStreamError } =
     useProcurementStream(sessionId);
 
   useEffect(() => {
-    const latest = events[events.length - 1];
-    if (!latest) return;
+    async function fetchPOs() {
+      if (!userId) return;
+      try {
+        // If the user is a "Manager", fetch all POs globally. Otherwise, filter by their specific ID.
+        const queryParams = userId.toLowerCase() === "manager" ? "" : `?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(`${BACKEND_URL}/api/v1/purchase-orders${queryParams}`);
+        if (response.ok) {
+          const data = await response.json();
+          const mapped = data.map((dbPo) => ({
+            id: dbPo.new_po_id,
+            requestText: `${dbPo.item_name || dbPo.item_id} (Qty: ${dbPo.quantity || 1})`,
+            userId: dbPo.approved_by || "System",
+            status: dbPo.status || "APPROVED",
+            poNumber: dbPo.new_po_id,
+            poPdfUrl: dbPo.pdf_url,
+            approvedAt: dbPo.created_at || new Date().toISOString(),
+          }));
+          setPurchaseOrders(mapped);
+        }
+      } catch (error) {
+        console.error("Failed to load POs:", error);
+      }
+    }
+    fetchPOs();
+  }, [userId]);
 
-    if (latest.type === "awaiting_input") {
-      addChat("manager", latest.data.question || latest.data.message);
+  useEffect(() => {
+    if (events.length === 0 && processedEventsCount > 0) {
+      setProcessedEventsCount(0);
+      return;
     }
-    if (latest.type === "report") {
-      addChat("manager", "Report generated. Review the recommendation below.");
+
+    if (events.length > processedEventsCount) {
+      const newEvents = events.slice(processedEventsCount);
+      setProcessedEventsCount(events.length);
+
+      newEvents.forEach((latest) => {
+        if (latest.type === "awaiting_input") {
+          setChatMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.payload && last.payload.type === latest.data.type) return prev;
+            return [...prev, { sender: "manager", text: null, payload: latest.data }];
+          });
+        }
+        if (latest.type === "report") {
+          setChatMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.payload && last.payload.type === "report") return prev;
+            return [...prev, { sender: "manager", text: null, payload: { type: "report", markdown: latest.data.markdown } }];
+          });
+        }
+        if (latest.type === "approve_ready") {
+          setChatMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.payload && last.payload.type === "approve_ready") return prev;
+            return [...prev, { sender: "manager", text: null, payload: { type: "approve_ready", message: latest.data.message } }];
+          });
+        }
+        if (latest.type === "completed") {
+          setChatMessages((prev) => [...prev, { sender: "manager", text: latest.data.message, payload: null }]);
+        }
+        if (latest.type === "error") {
+          setChatMessages((prev) => [...prev, { sender: "manager", text: `Error: ${latest.data.message}`, payload: null }]);
+        }
+      });
     }
-    if (latest.type === "approve_ready") addChat("manager", latest.data.message);
-    if (latest.type === "completed") addChat("manager", latest.data.message);
-    if (latest.type === "error") addChat("manager", `Error: ${latest.data.message}`);
-  }, [events]);
+  }, [events, processedEventsCount]);
 
   useEffect(() => {
     chatWindowRef.current?.scrollTo({ top: chatWindowRef.current.scrollHeight, behavior: "smooth" });
   }, [chatMessages, report, approveResult, awaitingInput]);
 
-  function addChat(sender, text) {
-    setChatMessages((prev) => [...prev, { sender, text }]);
+  useEffect(() => {
+    eventLogRef.current?.scrollTo({ top: eventLogRef.current.scrollHeight, behavior: "smooth" });
+  }, [events]);
+
+  function addChat(sender, text, payload = null) {
+    setChatMessages((prev) => [...prev, { sender, text, payload }]);
   }
 
   async function startSession(event) {
@@ -145,8 +188,12 @@ export default function App() {
 
     const userMessage = message.trim();
     setCurrentRequestText(userMessage);
-    addChat("user", userMessage);
-    addChat("manager", "Opening procurement session...");
+    
+    // Clear out the previous session's chat log and start fresh
+    setChatMessages([
+      { sender: "user", text: userMessage, payload: null },
+      { sender: "manager", text: "Opening procurement session...", payload: null }
+    ]);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/v1/chat`, {
@@ -173,6 +220,7 @@ export default function App() {
 
     setReplying(true);
     addChat("user", label);
+    setAwaitingInput(null);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/v1/chat/${sessionId}/reply`, {
@@ -203,27 +251,23 @@ export default function App() {
       const result = await response.json();
 
       setApproveResult(result);
-      addChat("manager", "Purchase Order generated successfully.");
+      addChat("manager", null, { type: "approve_result", data: result });
 
-      setPurchaseOrders((prev) => {
-        const next = [
-          {
-            id: `${sessionId}-${Date.now()}`,
-            sessionId,
-            userId,
-            requestText: currentRequestText,
-            status: result.status,
-            poNumber: result.po_number,
-            poPdfUrl: result.po_pdf_url,
-            approvedAt: new Date().toISOString(),
-          },
-          ...prev,
-        ];
-        saveStoredPOs(next);
-        return next;
-      });
+      setPurchaseOrders((prev) => [
+        {
+          id: `${sessionId}-${Date.now()}`,
+          requestText: currentRequestText,
+          userId: userId,
+          status: result.status || "APPROVED",
+          poNumber: result.po_number,
+          poPdfUrl: result.po_pdf_url,
+          approvedAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
     } catch (error) {
       addChat("manager", `Approval failed: ${error.message}`);
+      setStreamError(`Approval failed: ${error.message}`);
     }
 
     setLoading(false);
@@ -232,14 +276,18 @@ export default function App() {
   const status = streamError
     ? "ERROR"
     : completedMessage
-      ? "COMPLETED"
-      : canApprove
-        ? "AWAITING APPROVAL"
-        : awaitingInput
-          ? "AWAITING INPUT"
-          : sessionId
-            ? "RUNNING"
-            : "IDLE";
+      ? (completedMessage.toLowerCase().includes("cancel") ? "CANCELLED" : "COMPLETED")
+      : approveResult
+        ? "APPROVED"
+        : canApprove
+          ? "AWAITING APPROVAL"
+          : awaitingInput
+            ? "AWAITING INPUT"
+            : sessionId
+              ? "RUNNING"
+              : "IDLE";
+
+  const isSessionActive = ["RUNNING", "AWAITING INPUT", "AWAITING APPROVAL"].includes(status);
 
   return (
     <div className="app-shell">
@@ -280,7 +328,12 @@ export default function App() {
           </div>
           <div className="user-box">
             <label htmlFor="userId">Requester ID</label>
-            <input id="userId" value={userId} onChange={(e) => setUserId(e.target.value)} />
+            <input 
+              id="userId" 
+              value={userId} 
+              onChange={(e) => setUserId(e.target.value)} 
+              disabled={isSessionActive} 
+            />
           </div>
         </header>
 
@@ -335,46 +388,36 @@ export default function App() {
                 {chatMessages.map((chat, index) => (
                   <div key={index} className={chat.sender === "user" ? "chat-row user" : "chat-row manager"}>
                     <div className="avatar">{chat.sender === "user" ? <User size={16} /> : <Bot size={16} />}</div>
-                    <div className="bubble">{chat.text}</div>
+                    {chat.payload ? (
+                      chat.payload.type === "report" ? (
+                        <div className="bubble report-bubble">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{chat.payload.markdown}</ReactMarkdown>
+                        </div>
+                      ) : chat.payload.type === "approve_ready" ? (
+                        <div className="bubble">
+                          <p style={{ margin: "0 0 10px" }}>{chat.payload.message}</p>
+                          <button className="approve-btn" onClick={approvePO} disabled={loading || !!approveResult || index !== chatMessages.length - 1}>
+                            Approve &amp; generate PO
+                          </button>
+                        </div>
+                      ) : chat.payload.type === "approve_result" ? (
+                        <div className="bubble success-bubble">
+                          <h5>Purchase order generated</h5>
+                          <p><b>Status:</b> {chat.payload.data.status}</p>
+                          <a href={chat.payload.data.po_pdf_url} target="_blank" rel="noreferrer">Download PO PDF &rarr;</a>
+                        </div>
+                      ) : (
+                        <ReplyPrompt 
+                          payload={chat.payload} 
+                          onReply={submitReply} 
+                          disabled={replying || index !== chatMessages.length - 1} 
+                        />
+                      )
+                    ) : (
+                      <div className="bubble">{chat.text}</div>
+                    )}
                   </div>
                 ))}
-
-                {awaitingInput && (
-                  <div className="chat-row manager">
-                    <div className="avatar"><Bot size={16} /></div>
-                    <ReplyPrompt payload={awaitingInput} onReply={submitReply} disabled={replying} />
-                  </div>
-                )}
-
-                {report && (
-                  <div className="chat-row manager">
-                    <div className="avatar"><Bot size={16} /></div>
-                    <div className="bubble report-bubble">
-                      <ReactMarkdown>{report}</ReactMarkdown>
-                      {canApprove && !approveResult && (
-                        <button className="approve-btn" onClick={approvePO} disabled={loading}>
-                          Approve &amp; generate PO
-                        </button>
-                      )}
-                      {completedMessage && (
-                        <p className="completed-note">
-                          <CheckCircle2 size={14} /> {completedMessage}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {approveResult && (
-                  <div className="chat-row manager">
-                    <div className="avatar"><Bot size={16} /></div>
-                    <div className="bubble success-bubble">
-                      <h5>Purchase order generated</h5>
-                      <p><b>Status:</b> {approveResult.status}</p>
-                      <a href={approveResult.po_pdf_url} target="_blank" rel="noreferrer">Download PO PDF →</a>
-                    </div>
-                  </div>
-                )}
               </div>
 
               <form className="chat-input" onSubmit={startSession}>
@@ -383,9 +426,9 @@ export default function App() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Describe the request, e.g. Buy 30 Dell XPS 15 laptops"
-                    disabled={loading}
+                    disabled={loading || isSessionActive}
                   />
-                  <button disabled={loading} type="submit" aria-label="Send">
+                  <button disabled={loading || isSessionActive} type="submit" aria-label="Send">
                     <Send size={16} />
                   </button>
                 </div>
@@ -399,7 +442,7 @@ export default function App() {
                 <p><b>Status</b><span className={`status-chip status-${status.replace(/\s+/g, "-").toLowerCase()}`}>{status}</span></p>
               </div>
 
-              <div className="card-box log-box">
+              <div className="card-box log-box" ref={eventLogRef}>
                 <h5>Live event log</h5>
                 {events.length === 0 && <p className="muted-text">Waiting for stream events...</p>}
                 {events.map((event, index) => (

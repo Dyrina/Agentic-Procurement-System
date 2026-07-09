@@ -190,8 +190,7 @@ async def approve_chat(session_id: str) -> ApproveResponse:
         updated_state = await run_automation(state)
     except Exception as exc:
         logger.exception("automation failed for %s", session_id)
-        # Release the claim so the user can retry after a transient failure.
-        await asyncio.to_thread(db.update_evaluation, session_id, status="AWAITING_APPROVAL")
+        await asyncio.to_thread(db.update_evaluation, session_id, status="FAILED")
         raise HTTPException(status_code=500, detail=f"Automation failed: {exc}") from exc
 
     await asyncio.to_thread(db.update_evaluation, session_id, status="APPROVED")
@@ -201,6 +200,15 @@ async def approve_chat(session_id: str) -> ApproveResponse:
         po_pdf_url=updated_state.get("po_pdf_url", ""),
         po_number=updated_state.get("po_number", ""),
     )
+
+
+@router.get("/purchase-orders")
+async def list_purchase_orders(user_id: str | None = None):
+    """Fetch historical purchase orders from the database, optionally filtered by user."""
+    filters = {"approved_by": user_id} if user_id else None
+    # Sort descending by created_at in memory since Supabase ordering requires the raw client
+    data = await asyncio.to_thread(db.select, "purchase_orders", "*", filters)
+    return sorted(data, key=lambda x: x.get("created_at", ""), reverse=True)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -252,10 +260,11 @@ async def _drive_graph(session_id: str, graph_input: dict | Command) -> None:
             {"session_id": session_id, "message": "Approve to generate purchase order"},
         )
     elif final_status == "CANCELLED":
+        message = result.get("completion_message") or "Session cancelled."
         await push_event(
             session_id,
             "completed",
-            {"session_id": session_id, "message": "Session cancelled."},
+            {"session_id": session_id, "message": message},
         )
     else:
         # COMPLETED: check_stock query, satisfied ensure_stock, or out-of-scope rejection.

@@ -14,12 +14,6 @@ services:
     environment:
       - GMAIL_CREDENTIALS_PATH=/app/tokens/credentials.json
       - GMAIL_TOKEN_PATH=/app/tokens/token.json
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
     restart: unless-stopped
 
   # ── Frontend Web UI ────────────────────────────────────────────────────────
@@ -33,6 +27,5 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     restart: unless-stopped

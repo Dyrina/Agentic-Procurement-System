@@ -30,7 +30,7 @@ from src.database.client import SupabaseRepository
 from src.services.gmail import fetch_replies, get_gmail_service, send_email
 
 _POLL_INTERVAL = 15  # seconds
-_DEFAULT_TIMEOUT = 300  # 5 minutes
+_DEFAULT_TIMEOUT = 60  # 1 minutes
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ async def send_rfqs(item_name: str, item_category: str, requested_qty: int) -> d
 
     suppliers = await asyncio.to_thread(db.get_suppliers_by_category, item_category)
     if not suppliers:
-        raise ValueError(f"No suppliers found for category: {item_category}")
+        raise ValueError(f"No suppliers found for category '{item_category}' to fulfill item '{item_name}'")
 
     email_body = await _draft_rfq_email(item_name, requested_qty)
     subject = f"Request for Quotation — {item_name} (Qty: {requested_qty})"
@@ -188,7 +188,12 @@ async def extract_quotes(supplier_emails: list[str], rfq_sent_at: str) -> dict:
 
         for q in await _parse_quotes_with_gemini(text):
             q["supplier_id"] = supplier_id
-            q["supplier_name"] = supplier_name
+            
+            # Use the company name extracted from the PDF, fallback to DB if missing
+            extracted_name = q.get("supplier_name", "").strip()
+            if not extracted_name or extracted_name.lower() in ("unknown", "n/a", "missing"):
+                q["supplier_name"] = supplier_name
+            
             all_quotes.append(q)
 
     return {"extracted_quotes": all_quotes}
@@ -200,7 +205,16 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
     try:
         if not state.get("rfq_sent_at"):
             item_category = state.get("item_category", "General")
-            result = await send_rfqs(state["item_name"], item_category, state["requested_qty"])
+            try:
+                result = await send_rfqs(state["item_name"], item_category, state["requested_qty"])
+            except ValueError as e:
+                return {
+                    **state,
+                    "cancelled": True,
+                    "completion_message": f"Session cancelled: {str(e)}",
+                    "supervisor_history": [*history, _history_entry(f"Cancelled: {str(e)}")],
+                }
+            
             return {
                 **state,
                 **result,
@@ -226,6 +240,10 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
                         ),
                     ],
                 }
+            options = ["extend_wait", "send_reminder"]
+            if len(wait_result["pending_emails"]) < len(state["supplier_emails"]):
+                options.insert(0, "proceed_partial")
+
             return {
                 **state,
                 "all_replied": False,
@@ -238,7 +256,7 @@ async def sourcing_node(state: ProcurementState) -> ProcurementState:
                         "suppliers have not replied yet."
                     ),
                     "pending_emails": wait_result["pending_emails"],
-                    "options": ["proceed_partial", "extend_wait", "send_reminder"],
+                    "options": options,
                 },
             }
 

@@ -91,7 +91,7 @@ def _run_automation_sync(state: dict) -> dict:
         (s for s in suppliers if s["supplier_id"] == recommended["supplier_id"]),
         None,
     )
-    supplier_name = supplier_info["name"] if supplier_info else recommended.get("supplier_name", "Unknown")
+    supplier_name = recommended.get("supplier_name") or (supplier_info["name"] if supplier_info else "Unknown")
 
     quantity = state.get("requested_qty", 1)
     unit_price_sen = recommended["unit_price_sen"]

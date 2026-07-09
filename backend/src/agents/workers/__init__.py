@@ -55,5 +55,7 @@ def _format_error(exc: Exception) -> str:
         return "Configuration Error: The provided AI Model API Key is invalid or missing."
     if "Resource exhausted" in msg or "Quota exceeded" in msg or "429" in msg:
         return "Service Error: The AI service's rate limit or quota has been exceeded."
+    if exc.__class__.__name__ == "RefreshError" or "invalid_grant" in msg:
+        return "Gmail Integration Error: Your OAuth token has expired or been revoked. Please stop the server, delete 'backend/tokens/token.json', and run 'uv run python -m scripts.auth_gmail' locally to re-authenticate."
     # We fallback to a generic message so ugly JSON tracebacks don't leak to the UI
     return f"An unexpected system error occurred ({exc.__class__.__name__}). Please check the server logs."

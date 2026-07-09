@@ -2,10 +2,12 @@ import { useState } from "react";
 
 export default function ReplyPrompt({ payload, onReply, disabled }) {
   const [text, setText] = useState("");
+  const [clickedItem, setClickedItem] = useState(null);
 
   const questionText = payload.question || payload.message;
 
   function handleCandidateClick(candidate) {
+    setClickedItem(candidate.item_id);
     const label =
       candidate.item_id === "UNCATALOGED"
         ? candidate.name
@@ -14,14 +16,21 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
   }
 
   function handleOptionClick(option) {
+    setClickedItem(option);
     onReply({ action: option }, `Action: ${option}`);
   }
 
   function handleTextSubmit(event) {
     event.preventDefault();
     if (!text.trim()) return;
+    setClickedItem("text");
     onReply({ text: text.trim() }, text.trim());
     setText("");
+  }
+
+  function handleCancelClick() {
+    setClickedItem("cancel");
+    onReply({ action: "cancel" }, "Cancel request");
   }
 
   return (
@@ -33,9 +42,7 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
           {payload.candidates.map((candidate) => (
             <button
               key={candidate.item_id}
-              className={
-                candidate.item_id === "UNCATALOGED" ? "reply-option-btn reply-option-btn-muted" : "reply-option-btn"
-              }
+              className={`reply-option-btn ${candidate.item_id === "UNCATALOGED" ? "reply-option-btn-muted" : ""} ${clickedItem === candidate.item_id ? "selected" : ""}`}
               disabled={disabled}
               onClick={() => handleCandidateClick(candidate)}
             >
@@ -52,7 +59,7 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
           {payload.options.map((option) => (
             <button
               key={option}
-              className="reply-option-btn"
+              className={`reply-option-btn ${clickedItem === option ? "selected" : ""}`}
               disabled={disabled}
               onClick={() => handleOptionClick(option)}
             >
@@ -70,16 +77,16 @@ export default function ReplyPrompt({ payload, onReply, disabled }) {
             placeholder="Type your answer..."
             disabled={disabled}
           />
-          <button type="submit" disabled={disabled}>
+          <button type="submit" disabled={disabled} className={clickedItem === "text" ? "selected" : ""}>
             Send
           </button>
         </form>
       )}
 
       <button
-        className="reply-option-btn reply-option-btn-muted"
+        className={`reply-option-btn reply-option-btn-muted ${clickedItem === "cancel" ? "selected" : ""}`}
         disabled={disabled}
-        onClick={() => onReply({ action: "cancel" }, "Cancel request")}
+        onClick={handleCancelClick}
       >
         Cancel request
       </button>

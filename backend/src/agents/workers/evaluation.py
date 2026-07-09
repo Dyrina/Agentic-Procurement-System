@@ -79,7 +79,9 @@ _SYSTEM_PROMPT = (
     "price, delivery time, and payment terms. Call get_purchase_history for historical context "
     "and get_reference_score for a deterministic reference point, but use your own judgment — "
     "flag any risk you notice (e.g. price far above historical average, unusually long "
-    "delivery). Call write_audit_log exactly once, when you're done, with your final decision."
+    "delivery). Call write_audit_log exactly once, when you're done, with your final decision. "
+    "CRITICAL: Do NOT alter, modify, or invent any supplier_ids. You MUST use the exact supplier_id "
+    "provided in the extracted_quotes, even if multiple quotes share the identical supplier_id."
 )
 
 
