@@ -263,7 +263,7 @@ export default function App() {
             className={activeView === "reports" ? "active" : ""}
             onClick={() => setActiveView("reports")}
           >
-            <FileText size={16} /> Reports
+            <FileText size={16} /> Purchase Orders
             {purchaseOrders.length > 0 && <span className="nav-count">{purchaseOrders.length}</span>}
           </button>
           <button disabled>
@@ -350,7 +350,7 @@ export default function App() {
                   <div className="chat-row manager">
                     <div className="avatar"><Bot size={16} /></div>
                     <div className="bubble report-bubble">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                      <ReactMarkdown>{report}</ReactMarkdown>
                       {canApprove && !approveResult && (
                         <button className="approve-btn" onClick={approvePO} disabled={loading}>
                           Approve &amp; generate PO
