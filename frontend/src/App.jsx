@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Bot,
   CheckCircle2,
@@ -349,7 +350,7 @@ export default function App() {
                   <div className="chat-row manager">
                     <div className="avatar"><Bot size={16} /></div>
                     <div className="bubble report-bubble">
-                      <ReactMarkdown>{report}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                       {canApprove && !approveResult && (
                         <button className="approve-btn" onClick={approvePO} disabled={loading}>
                           Approve &amp; generate PO
